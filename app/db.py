@@ -1,0 +1,158 @@
+import sqlite3
+from contextlib import contextmanager
+from datetime import datetime, time, timedelta
+from pathlib import Path
+from typing import Optional
+
+from dateutil import parser as dateutil_parser
+
+DB_PATH = Path(__file__).resolve().parent / "agendamento.db"
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS sessoes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    titulo TEXT,
+    criado_em TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS mensagens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sessao_id INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    conteudo TEXT NOT NULL,
+    criado_em TEXT NOT NULL,
+    FOREIGN KEY (sessao_id) REFERENCES sessoes (id)
+);
+
+CREATE TABLE IF NOT EXISTS agendamentos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sessao_id INTEGER NOT NULL,
+    cliente TEXT,
+    servico TEXT,
+    data TEXT,
+    hora TEXT,
+    status TEXT NOT NULL,
+    criado_em TEXT NOT NULL,
+    FOREIGN KEY (sessao_id) REFERENCES sessoes (id)
+);
+"""
+
+
+def _now() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def init_db() -> None:
+    with _connect() as conn:
+        conn.executescript(SCHEMA)
+
+
+def _connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+@contextmanager
+def _tx():
+    conn = _connect()
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def criar_sessao(titulo: str) -> int:
+    with _tx() as conn:
+        cur = conn.execute(
+            "INSERT INTO sessoes (titulo, criado_em) VALUES (?, ?)",
+            (titulo, _now()),
+        )
+        return cur.lastrowid
+
+
+def listar_sessoes():
+    with _tx() as conn:
+        rows = conn.execute("SELECT * FROM sessoes ORDER BY id").fetchall()
+        return [dict(r) for r in rows]
+
+
+def obter_sessao(sessao_id: int):
+    with _tx() as conn:
+        row = conn.execute("SELECT * FROM sessoes WHERE id = ?", (sessao_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def adicionar_mensagem(sessao_id: int, role: str, conteudo: str) -> int:
+    with _tx() as conn:
+        cur = conn.execute(
+            "INSERT INTO mensagens (sessao_id, role, conteudo, criado_em) VALUES (?, ?, ?, ?)",
+            (sessao_id, role, conteudo, _now()),
+        )
+        return cur.lastrowid
+
+
+def listar_mensagens(sessao_id: int):
+    with _tx() as conn:
+        rows = conn.execute(
+            "SELECT * FROM mensagens WHERE sessao_id = ? ORDER BY id", (sessao_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def salvar_agendamento(sessao_id: int, cliente, servico, data, hora, status="rascunho") -> int:
+    with _tx() as conn:
+        cur = conn.execute(
+            """INSERT INTO agendamentos (sessao_id, cliente, servico, data, hora, status, criado_em)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (sessao_id, cliente, servico, data, hora, status, _now()),
+        )
+        return cur.lastrowid
+
+
+def verificar_conflito(data: str, hora_inicio: str, hora_fim: str) -> bool:
+    alvo_data = _data_iso(data)
+    if alvo_data is None:
+        return False
+    with _tx() as conn:
+        rows = conn.execute(
+            """SELECT data, hora FROM agendamentos
+               WHERE status = 'confirmado' AND data IS NOT NULL AND hora IS NOT NULL"""
+        ).fetchall()
+    for r in rows:
+        if _data_iso(r["data"]) != alvo_data:
+            continue
+        if _sobrepoe(hora_inicio, hora_fim, r["hora"]):
+            return True
+    return False
+
+
+def _data_iso(texto) -> Optional[str]:
+    try:
+        return dateutil_parser.parse(str(texto)).date().isoformat()
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
+def _sobrepoe(inicio_a: str, fim_a: str, inicio_b: str) -> bool:
+    h1 = _hora(inicio_a)
+    h2 = _hora(inicio_b)
+    if h1 is None or h2 is None:
+        return False
+    fim1 = (datetime.combine(datetime.min.date(), h1) + timedelta(minutes=60)).time()
+    fim2 = (datetime.combine(datetime.min.date(), h2) + timedelta(minutes=60)).time()
+    return h1 < fim2 and h2 < fim1
+
+
+def _hora(texto) -> Optional[time]:
+    try:
+        return dateutil_parser.parse(str(texto)).time()
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
+def listar_agendamentos():
+    with _tx() as conn:
+        rows = conn.execute("SELECT * FROM agendamentos ORDER BY id").fetchall()
+        return [dict(r) for r in rows]
