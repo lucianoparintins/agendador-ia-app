@@ -6,6 +6,7 @@ from pydantic import BaseModel
 class ChatRequest(BaseModel):
     sessao_id: Optional[int] = None
     mensagem: str
+    stream: Optional[bool] = False
 
 
 class Agendamento(BaseModel):

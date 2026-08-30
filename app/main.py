@@ -1,9 +1,12 @@
 from contextlib import asynccontextmanager
+import json
+from typing import AsyncIterator, Optional, Tuple
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import StreamingResponse
 
 from . import agenda, db
-from .ollama_client import OllamaClient
+from .ollama_client import _extrair_json, OllamaClient
 from .schema import Agendamento, ChatRequest, ChatResponse, Validacao
 
 ollama = OllamaClient()
@@ -33,6 +36,109 @@ MOTIVO_TEXTO = {
 }
 
 
+async def _processar_dados(
+    sessao_id: int, dados: dict, historico
+) -> Tuple[str, Optional[Agendamento], Optional[Validacao]]:
+    agendamento = Agendamento(**{
+        "cliente": dados.get("cliente"),
+        "servico": dados.get("servico"),
+        "data": dados.get("data"),
+        "hora": dados.get("hora"),
+    })
+
+    resultado = agenda.validar_agendamento(dados.get("data"), dados.get("hora"))
+    reply = None
+
+    if resultado.valido:
+        agendamento.status = "confirmado"
+        validacao = Validacao(valido=True, motivo=None)
+        db.salvar_agendamento(
+            sessao_id,
+            dados.get("cliente"),
+            dados.get("servico"),
+            dados.get("data"),
+            dados.get("hora"),
+            status="confirmado",
+        )
+    elif resultado.motivo == "insuficiente":
+        agendamento.status = "rascunho"
+        validacao = Validacao(valido=False, motivo=resultado.motivo)
+        if any(dados.get(k) for k in ("cliente", "servico", "data", "hora")):
+            db.salvar_agendamento(
+                sessao_id,
+                dados.get("cliente"),
+                dados.get("servico"),
+                dados.get("data"),
+                dados.get("hora"),
+                status="rascunho",
+            )
+    else:
+        agendamento.status = "rejeitado"
+        validacao = Validacao(valido=False, motivo=resultado.motivo)
+        motivo_texto = MOTIVO_TEXTO.get(
+            resultado.motivo, "o horário não está disponível"
+        )
+        rejeicao_texto = (
+            f"O cliente pediu para agendar em {dados.get('data')} às "
+            f"{dados.get('hora')}, mas isso não é possível porque "
+            f"{motivo_texto}."
+        )
+        db.salvar_agendamento(
+            sessao_id,
+            dados.get("cliente"),
+            dados.get("servico"),
+            dados.get("data"),
+            dados.get("hora"),
+            status="rejeitado",
+        )
+        reply, _ = await ollama.reprocessar_rejeicao(historico(), rejeicao_texto)
+
+    return reply, agendamento, validacao
+
+
+def _sse(data) -> str:
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+async def _gerar_stream(
+    sessao_id: int, historico, nova_mensagem: str
+) -> AsyncIterator[str]:
+    partes: list[str] = []
+    async for chunk in ollama.stream_chat(historico(), nova_mensagem):
+        partes.append(chunk)
+        yield _sse({"type": "token", "content": chunk})
+
+    texto = "".join(partes)
+    dados = _extrair_json(texto)
+
+    if dados:
+        reply_final, agendamento, validacao = await _processar_dados(
+            sessao_id, dados, historico
+        )
+        if reply_final is not None and reply_final != texto:
+            yield _sse({"type": "correcao", "reply": reply_final})
+            reply = reply_final
+        else:
+            reply = texto
+        db.adicionar_mensagem(sessao_id, "assistant", reply)
+        yield _sse({
+            "type": "done",
+            "sessao_id": sessao_id,
+            "agendamento": agendamento.model_dump() if agendamento else None,
+            "validacao": validacao.model_dump() if validacao else None,
+        })
+    else:
+        db.adicionar_mensagem(sessao_id, "assistant", texto)
+        yield _sse({
+            "type": "done",
+            "sessao_id": sessao_id,
+            "agendamento": None,
+            "validacao": None,
+        })
+
+    yield "data: [DONE]\n\n"
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
     if req.sessao_id is not None:
@@ -51,65 +157,23 @@ async def chat(req: ChatRequest):
         if m["role"] in ("user", "assistant")
     ]
 
+    if req.stream:
+        return StreamingResponse(
+            _gerar_stream(sessao_id, historico, req.mensagem),
+            media_type="text/event-stream",
+        )
+
     reply, dados = await ollama.chat(historico(), req.mensagem)
 
     agendamento = None
     validacao: Validacao | None = None
 
     if dados:
-        agendamento = Agendamento(**{
-            "cliente": dados.get("cliente"),
-            "servico": dados.get("servico"),
-            "data": dados.get("data"),
-            "hora": dados.get("hora"),
-        })
-
-        resultado = agenda.validar_agendamento(dados.get("data"), dados.get("hora"))
-
-        if resultado.valido:
-            agendamento.status = "confirmado"
-            validacao = Validacao(valido=True, motivo=None)
-            db.salvar_agendamento(
-                sessao_id,
-                dados.get("cliente"),
-                dados.get("servico"),
-                dados.get("data"),
-                dados.get("hora"),
-                status="confirmado",
-            )
-        elif resultado.motivo == "insuficiente":
-            agendamento.status = "rascunho"
-            validacao = Validacao(valido=False, motivo=resultado.motivo)
-            if any(dados.get(k) for k in ("cliente", "servico", "data", "hora")):
-                db.salvar_agendamento(
-                    sessao_id,
-                    dados.get("cliente"),
-                    dados.get("servico"),
-                    dados.get("data"),
-                    dados.get("hora"),
-                    status="rascunho",
-                )
-        else:
-            agendamento.status = "rejeitado"
-            validacao = Validacao(valido=False, motivo=resultado.motivo)
-            motivo_texto = MOTIVO_TEXTO.get(
-                resultado.motivo, "o horário não está disponível"
-            )
-            rejeicao_texto = (
-                f"O cliente pediu para agendar em {dados.get('data')} às "
-                f"{dados.get('hora')}, mas isso não é possível porque "
-                f"{motivo_texto}."
-            )
-            db.salvar_agendamento(
-                sessao_id,
-                dados.get("cliente"),
-                dados.get("servico"),
-                dados.get("data"),
-                dados.get("hora"),
-                status="rejeitado",
-            )
-            reply, _ = await ollama.reprocessar_rejeicao(historico(), rejeicao_texto)
-            db.adicionar_mensagem(sessao_id, "assistant", reply)
+        reply_final, agendamento, validacao = await _processar_dados(
+            sessao_id, dados, historico
+        )
+        if reply_final is not None:
+            reply = reply_final
 
     db.adicionar_mensagem(sessao_id, "assistant", reply)
 

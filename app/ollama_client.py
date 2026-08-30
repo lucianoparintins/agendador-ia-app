@@ -1,7 +1,7 @@
 import ast
 import json
 import re
-from typing import List, Optional
+from typing import AsyncIterator, List, Optional
 
 import httpx
 
@@ -71,13 +71,44 @@ class OllamaClient:
         dados = _extrair_json(reply)
         return reply, dados
 
-    async def chat(
-        self, historico: List[dict], nova_mensagem: str
-    ) -> tuple[str, Optional[dict]]:
+    @staticmethod
+    def _montar_messages(historico: List[dict], nova_mensagem: str) -> List[dict]:
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         messages.extend(historico)
         messages.append({"role": "user", "content": nova_mensagem})
-        return await self._call(messages)
+        return messages
+
+    async def chat(
+        self, historico: List[dict], nova_mensagem: str
+    ) -> tuple[str, Optional[dict]]:
+        return await self._call(self._montar_messages(historico, nova_mensagem))
+
+    async def stream_chat(
+        self, historico: List[dict], nova_mensagem: str
+    ) -> AsyncIterator[str]:
+        payload = {
+            "model": self.model,
+            "messages": self._montar_messages(historico, nova_mensagem),
+            "stream": True,
+        }
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            async with client.stream(
+                "POST", f"{self.base_url}/api/chat", json=payload
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line.strip():
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    chunk = data.get("message", {}).get("content", "")
+                    if chunk:
+                        yield chunk
+                    if data.get("done"):
+                        break
 
     async def reprocessar_rejeicao(
         self, historico: List[dict], rejeicao_texto: str

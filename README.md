@@ -29,7 +29,7 @@ Acesse a documentação interativa (Swagger) em http://localhost:8000/docs
 
 | Método | Rota                          | Descrição                                          |
 |--------|-------------------------------|----------------------------------------------------|
-| POST   | `/chat`                       | Envia mensagem, retorna resposta + agendamento JSON |
+| POST   | `/chat`                       | Envia mensagem, retorna resposta + agendamento JSON. Aceita `stream` para tokens ao vivo (SSE) |
 | GET    | `/sessoes`                    | Lista sessões                                      |
 | GET    | `/sessoes/{id}/mensagens`     | Histórico de mensagens de uma sessão               |
 | GET    | `/agendamentos`               | Lista agendamentos persistidos                     |
@@ -52,6 +52,23 @@ curl -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" \
   -d '{"sessao_id": 1, "mensagem": "Sou o João, e gostaria de amanhã às 10h"}'
 ```
+
+### Streaming de tokens (SSE)
+
+Envie `"stream": true` para receber os tokens ao vivo via `text/event-stream`:
+
+```bash
+curl -N -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"sessao_id": 1, "stream": true, "mensagem": "Quero agendar um corte amanhã às 10h"}'
+```
+
+Eventos emitidos (cada um como `data: <json>`):
+
+- `{"type":"token","content":"..."}` — um pedaço da resposta, ao vivo.
+- `{"type":"correcao","reply":"..."}` — opcional, quando o horário é rejeitado e a resposta é reprocessada pelo Ollama pedindo novo horário.
+- `{"type":"done","sessao_id":N,"agendamento":{...},"validacao":{...}}` — final.
+- Terminador `data: [DONE]`.
 
 ## Banco de dados
 
@@ -80,7 +97,8 @@ agendador-ia-app/
 ├── .gitignore                # __pycache__, *.db, .venv
 ├── spec/
 │   ├── 2026-08-30-174308-PLANO.md              # plano do projeto (datado)
-│   └── 2026-08-30-180847-PLANO-VALIDACAO-AGENDA.md  # plano de validação de agenda
+│   ├── 2026-08-30-180847-PLANO-VALIDACAO-AGENDA.md  # plano de validação de agenda
+│   └── 2026-08-30-183828-PLANO-STREAMING.md    # plano de streaming de tokens
 ├── app/
 │   ├── __init__.py
 │   ├── main.py               # App FastAPI, rotas, startup (cria tabelas)
@@ -93,10 +111,11 @@ agendador-ia-app/
 
 ## Estado atual
 
-Situação em **30/08/2026** — segunda iteração (validação de agenda) implementada e validada:
+Situação em **30/08/2026** — terceira iteração (streaming de tokens) implementada:
 
 **Implementado**
 - `POST /chat`: recebe mensagem, recupera/cria sessão no SQLite, reconstrói o histórico, consulta o `gemma2:2b` via Ollama local e retorna `{ sessao_id, reply, agendamento?, validacao? }`. Mensagens do usuário e do assistente são persistidas.
+- **Streaming de tokens (`stream=True`):** `/chat` passa a aceitar `"stream": true` e retorna `text/event-stream` (SSE) transmitindo os tokens ao vivo. Eventos: `token` (cada pedaço), `correcao` (quando o horário é rejeitado e a reply é reprocessada), `done` (com `agendamento`/`validacao`) e terminador `[DONE]`. Apenas a reply final é persistida no histórico.
 - Validação de agendamento no backend (`app/agenda.py`): expediente (seg–sex 9h–18h, sáb 9h–13h, domingo fechado), duração fixa de 1h, rejeição de data passada e de conflito com agendamentos `confirmados`.
 - Novos campos: `status` (`confirmado`/`rascunho`/`rejeitado`) no agendamento e `validacao: {valido, motivo}` na resposta do `/chat`.
 - Rejeição com reprocessamento: quando o horário é inválido, o Ollama é reconsultado informando o motivo e a `reply` pede um novo horário ao cliente; o registro é salvo como `rejeitado`.
@@ -109,17 +128,17 @@ Situação em **30/08/2026** — segunda iteração (validação de agenda) impl
 - Horário conflitante com um agendamento `confirmado` → `status=rejeitado` e `validacao.motivo=conflito`.
 - Mensagem sem data/hora → `status=rascunho`.
 - Data no passado → `status=rejeitado` e `validacao.motivo=no_passado`.
+- Streaming (`curl -N` com `stream=true`): eventos `token` ao vivo, `done` com `agendamento`/`validacao`, e `correcao` nos casos de rejeição.
 - `GET /health` reportou `{"status": "ok", "ollama_reachable": true}`.
 
 **Observações / decisões**
 - O histórico completo é reconstruído no servidor a partir do `sessao_id` (fonte da verdade = SQLite).
-- Streaming está **fora** do escopo desta versão — o `/chat` retorna a resposta completa pronta.
+- No streaming, a validação acontece ao final (depende do texto completo). Quando rejeitado, o texto inicial já transmitido é substituído pela reply reprocessada via evento `correcao`; apenas a reply final é gravada.
 - **Correção aplicada durante o build:** o `gemma2:2b` retorna JSON com aspas simples (não compatível com `json.loads` estrito). O parser em `ollama_client.py` tenta `json.loads` e, se falhar, usa `ast.literal_eval` como fallback — normalizando `null`/`true`/`false` do JSON para `None`/`True`/`False`. Isso cobre blocos com campos desconhecidos (`{'data': null}`), comuns nas respostas.
 - Parsing de data/hora usa `python-dateutil` (aceita AAAA-MM-DD, DD/MM/AAAA, HH:MM, HHhMM etc.). Atenção: datas ambíguas como `06/09/2026` são interpretadas em formato mês/dia; para evitar surpresa, prefira o formato ISO `AAAA-MM-DD`.
 - A validação acontece apenas em `data` + `hora`; cliente/serviço não são validados.
 
 **Próximas evoluções (não implementadas)**
-- Streaming de tokens (`stream=True`).
 - Disponibilidade injetada no prompt (o modelo já conhece a agenda antes de responder).
 - Fluxo de confirmação explícita pelo cliente antes de salvar como `confirmado`.
 - Frontend/UI de chat.
