@@ -34,6 +34,13 @@ def parse_data(valor: str) -> Optional[date]:
         return None
 
 
+def formatar_data(valor: str) -> Optional[str]:
+    d = parse_data(valor)
+    if d is None:
+        return valor
+    return d.strftime("%d/%m/%Y")
+
+
 def parse_hora(valor: str) -> Optional[time]:
     if not valor:
         return None

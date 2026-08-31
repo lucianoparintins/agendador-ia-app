@@ -16,6 +16,7 @@ SYSTEM_PROMPT = (
     "Ao final da sua resposta, sempre inclua um bloco JSON no formato "
     "{'cliente': ..., 'servico': ..., 'data': ..., 'hora': ...} "
     "preenchendo apenas os campos que já conhece (null para os desconhecidos). "
+    "Sempre apresente datas no formato DD/MM/YYYY. "
     "Responda em português do Brasil."
 )
 
