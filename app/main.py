@@ -49,14 +49,29 @@ async def _processar_dados(
 ) -> Tuple[str, Optional[Agendamento], Optional[Validacao]]:
     dados["data"] = agenda.resolver_data_relativa(dados.get("data"))
     dados["data"] = agenda.formatar_data(dados.get("data"))
+
+    rascunho = db.obter_rascunho_ativo(sessao_id)
+    if rascunho is not None:
+        finais = dict(rascunho)
+        for chave in ("cliente", "servico", "data", "hora"):
+            if dados.get(chave):
+                finais[chave] = dados[chave]
+    else:
+        finais = {
+            "cliente": dados.get("cliente"),
+            "servico": dados.get("servico"),
+            "data": dados.get("data"),
+            "hora": dados.get("hora"),
+        }
+
     agendamento = Agendamento(**{
-        "cliente": dados.get("cliente"),
-        "servico": dados.get("servico"),
-        "data": dados.get("data"),
-        "hora": dados.get("hora"),
+        "cliente": finais.get("cliente"),
+        "servico": finais.get("servico"),
+        "data": finais.get("data"),
+        "hora": finais.get("hora"),
     })
 
-    resultado = agenda.validar_agendamento(dados.get("data"), dados.get("hora"))
+    resultado = agenda.validar_agendamento(finais.get("data"), finais.get("hora"))
     reply = None
 
     if resultado.valido:
@@ -64,22 +79,22 @@ async def _processar_dados(
         validacao = Validacao(valido=True, motivo=None)
         db.salvar_agendamento(
             sessao_id,
-            dados.get("cliente"),
-            dados.get("servico"),
-            dados.get("data"),
-            dados.get("hora"),
+            finais.get("cliente"),
+            finais.get("servico"),
+            finais.get("data"),
+            finais.get("hora"),
             status="confirmado",
         )
     elif resultado.motivo == "insuficiente":
         agendamento.status = "rascunho"
         validacao = Validacao(valido=False, motivo=resultado.motivo)
-        if any(dados.get(k) for k in ("cliente", "servico", "data", "hora")):
+        if any(finais.get(k) for k in ("cliente", "servico", "data", "hora")):
             db.salvar_agendamento(
                 sessao_id,
-                dados.get("cliente"),
-                dados.get("servico"),
-                dados.get("data"),
-                dados.get("hora"),
+                finais.get("cliente"),
+                finais.get("servico"),
+                finais.get("data"),
+                finais.get("hora"),
                 status="rascunho",
             )
     else:
@@ -89,18 +104,35 @@ async def _processar_dados(
             resultado.motivo, "o horário não está disponível"
         )
         rejeicao_texto = (
-            f"O cliente pediu para agendar em {dados.get('data')} às "
-            f"{dados.get('hora')}, mas isso não é possível porque "
+            f"O cliente pediu para agendar em {finais.get('data')} às "
+            f"{finais.get('hora')}, mas isso não é possível porque "
             f"{motivo_texto}."
         )
-        db.salvar_agendamento(
+        db.salvar_agendamento_rejeitado(
             sessao_id,
-            dados.get("cliente"),
-            dados.get("servico"),
-            dados.get("data"),
-            dados.get("hora"),
-            status="rejeitado",
+            finais.get("cliente"),
+            finais.get("servico"),
+            finais.get("data"),
+            finais.get("hora"),
         )
+        if rascunho is not None:
+            db.atualizar_agendamento(
+                rascunho["id"],
+                finais.get("cliente"),
+                finais.get("servico"),
+                None,
+                None,
+                "rascunho",
+            )
+        else:
+            db.salvar_agendamento(
+                sessao_id,
+                finais.get("cliente"),
+                finais.get("servico"),
+                None,
+                None,
+                status="rascunho",
+            )
         reply, _ = await ollama.reprocessar_rejeicao(historico(), rejeicao_texto)
 
     return reply, agendamento, validacao

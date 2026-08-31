@@ -101,12 +101,67 @@ def listar_mensagens(sessao_id: int):
         return [dict(r) for r in rows]
 
 
+def obter_rascunho_ativo(sessao_id: int) -> Optional[dict]:
+    with _tx() as conn:
+        row = conn.execute(
+            """SELECT * FROM agendamentos
+               WHERE sessao_id = ? AND status = 'rascunho'
+               ORDER BY id DESC LIMIT 1""",
+            (sessao_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def atualizar_agendamento(
+    agendamento_id: int, cliente, servico, data, hora, status
+) -> None:
+    with _tx() as conn:
+        conn.execute(
+            """UPDATE agendamentos
+               SET cliente = ?, servico = ?, data = ?, hora = ?, status = ?, criado_em = ?
+               WHERE id = ?""",
+            (cliente, servico, data, hora, status, _now(), agendamento_id),
+        )
+
+
 def salvar_agendamento(sessao_id: int, cliente, servico, data, hora, status="rascunho") -> int:
+    rascunho = obter_rascunho_ativo(sessao_id)
+    if rascunho is not None:
+        campos = (
+            ("cliente", cliente),
+            ("servico", servico),
+            ("data", data),
+            ("hora", hora),
+        )
+        merged = dict(rascunho)
+        for chave, valor in campos:
+            if valor:
+                merged[chave] = valor
+        atualizar_agendamento(
+            rascunho["id"],
+            merged["cliente"],
+            merged["servico"],
+            merged["data"],
+            merged["hora"],
+            status,
+        )
+        return rascunho["id"]
+
     with _tx() as conn:
         cur = conn.execute(
             """INSERT INTO agendamentos (sessao_id, cliente, servico, data, hora, status, criado_em)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (sessao_id, cliente, servico, data, hora, status, _now()),
+        )
+        return cur.lastrowid
+
+
+def salvar_agendamento_rejeitado(sessao_id: int, cliente, servico, data, hora) -> int:
+    with _tx() as conn:
+        cur = conn.execute(
+            """INSERT INTO agendamentos (sessao_id, cliente, servico, data, hora, status, criado_em)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (sessao_id, cliente, servico, data, hora, "rejeitado", _now()),
         )
         return cur.lastrowid
 
