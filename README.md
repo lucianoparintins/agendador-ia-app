@@ -33,6 +33,11 @@ Acesse a documentação interativa (Swagger) em http://localhost:8000/docs
 | GET    | `/sessoes`                    | Lista sessões                                      |
 | GET    | `/sessoes/{id}/mensagens`     | Histórico de mensagens de uma sessão               |
 | GET    | `/agendamentos`               | Lista agendamentos persistidos                     |
+| GET    | `/clientes`                   | Lista todos os clientes                            |
+| GET    | `/clientes/{id}`              | Obtém um cliente por ID                            |
+| POST   | `/clientes`                   | Cria um novo cliente (`{nome, telefone}`)          |
+| PUT    | `/clientes/{id}`              | Atualiza nome/telefone de um cliente               |
+| DELETE | `/clientes/{id}`              | Remove um cliente                                  |
 | GET    | `/health`                     | Verifica disponibilidade do Ollama                 |
 
 ## Exemplo (curl)
@@ -76,7 +81,8 @@ Arquivo SQLite em `app/agendamento.db` (criado automaticamente na inicializaçã
 
 - `sessoes` — sessões de conversa
 - `mensagens` — histórico (role user/assistant)
-- `agendamentos` — agendamentos extraídos e persistidos, com `status` (`confirmado` / `rascunho` / `rejeitado`)
+- `clientes` — cadastro de clientes, com `telefone` **único** (formato `(NN) NNNN-NNNN`)
+- `agendamentos` — agendamentos extraídos e persistidos, com `status` (`confirmado` / `rascunho` / `rejeitado`) e vínculo (`cliente_id`) ao cadastro do cliente
 
 ## Regras da agenda
 
@@ -142,6 +148,7 @@ Situação em **30/08/2026** — iterações de datas relativas, consolidação 
 - `GET /health`, `GET /sessoes`, `GET /sessoes/{id}/mensagens`, `GET /agendamentos`.
 - **Frontend/UI de chat:** diretório `client/` com `index.html` simples (sem build) que conversa com o `/chat` via SSE. Suba a API (`uvicorn app.main:app --reload`) e sirva o client (`python -m http.server 8080 -d client`), abrindo `http://localhost:8080`.
 - **Script de reset:** `scripts/reset_db.py` zera o banco SQLite (confirma antes de apagar).
+- **Cadastro de clientes:** entidade `clientes` com `telefone` único. O LLM extrai nome e telefone (máscara `(NN) NNNN-NNNN`). Na primeira vez que um telefone aparece, o cliente é cadastrado automaticamente; em conversas seguintes, o cliente é reutilizado pelo telefone. Quando o telefone não é informado, o bot solicita ao usuário. CRUD completo em `/clientes`.
 - Persistência SQLite completa: sessões, histórico de mensagens e agendamentos (banco `app/agendamento.db`).
 
 **Validado ponta a ponta (curl)**
@@ -160,7 +167,7 @@ Situação em **30/08/2026** — iterações de datas relativas, consolidação 
 - No streaming, a validação acontece ao final (depende do texto completo). Quando rejeitado, o texto inicial já transmitido é substituído pela reply reprocessada via evento `correcao`; apenas a reply final é gravada.
 - **Correção aplicada durante o build:** o `gemma2:2b` retorna JSON com aspas simples (não compatível com `json.loads` estrito). O parser em `ollama_client.py` tenta `json.loads` e, se falhar, usa `ast.literal_eval` como fallback — normalizando `null`/`true`/`false` do JSON para `None`/`True`/`False`. Isso cobre blocos com campos desconhecidos (`{'data': null}`), comuns nas respostas.
 - Parsing de data/hora usa `python-dateutil`. O `parse_data` usa `dayfirst=True` para formatos `DD/MM/AAAA` (e detecta ISO `AAAA-MM-DD` separadamente), garantindo que dia e mês não sejam invertidos.
-- A validação acontece apenas em `data` + `hora`; cliente/serviço não são validados.
+- A validação acontece apenas em `data` + `hora`; cliente/serviço não são validados (o cliente é identificado apenas pelo telefone).
 - O modelo `gemma2:2b` é instável na geração do JSON; o reforço no prompt reduz, mas não elimina, respostas sem bloco JSON.
 
 **Próximas evoluções (não implementadas)**

@@ -8,7 +8,15 @@ from fastapi.responses import StreamingResponse
 
 from . import agenda, db
 from .ollama_client import _extrair_json, OllamaClient
-from .schema import Agendamento, ChatRequest, ChatResponse, Validacao
+from .schema import (
+    Agendamento,
+    ChatRequest,
+    ChatResponse,
+    Cliente,
+    ClienteCreate,
+    ClienteUpdate,
+    Validacao,
+)
 
 ollama = OllamaClient()
 
@@ -44,28 +52,56 @@ MOTIVO_TEXTO = {
 }
 
 
+def _obter_ou_criar_cliente(dados: dict) -> Optional[int]:
+    telefone = dados.get("telefone")
+    if not telefone:
+        return None
+
+    cliente = db.obter_cliente_por_telefone(telefone)
+    if cliente is not None:
+        return cliente["id"]
+
+    nome = dados.get("cliente") or "Cliente"
+    return db.criar_cliente(nome, telefone)
+
+
 async def _processar_dados(
     sessao_id: int, dados: dict, historico
 ) -> Tuple[str, Optional[Agendamento], Optional[Validacao]]:
+    telefone = dados.get("telefone")
+    if not telefone:
+        return (
+            "Por favor, informe seu telefone para continuar com o agendamento.",
+            None,
+            None,
+        )
+
+    cliente_id = _obter_ou_criar_cliente(dados)
+
     dados["data"] = agenda.resolver_data_relativa(dados.get("data"))
     dados["data"] = agenda.formatar_data(dados.get("data"))
 
     rascunho = db.obter_rascunho_ativo(sessao_id)
     if rascunho is not None:
         finais = dict(rascunho)
-        for chave in ("cliente", "servico", "data", "hora"):
+        for chave in ("cliente_id", "cliente", "telefone", "servico", "data", "hora"):
             if dados.get(chave):
                 finais[chave] = dados[chave]
+        finais["cliente_id"] = cliente_id if cliente_id else finais.get("cliente_id")
     else:
         finais = {
+            "cliente_id": cliente_id,
             "cliente": dados.get("cliente"),
+            "telefone": telefone,
             "servico": dados.get("servico"),
             "data": dados.get("data"),
             "hora": dados.get("hora"),
         }
 
     agendamento = Agendamento(**{
+        "cliente_id": finais.get("cliente_id"),
         "cliente": finais.get("cliente"),
+        "telefone": finais.get("telefone"),
         "servico": finais.get("servico"),
         "data": finais.get("data"),
         "hora": finais.get("hora"),
@@ -79,7 +115,7 @@ async def _processar_dados(
         validacao = Validacao(valido=True, motivo=None)
         db.salvar_agendamento(
             sessao_id,
-            finais.get("cliente"),
+            finais.get("cliente_id"),
             finais.get("servico"),
             finais.get("data"),
             finais.get("hora"),
@@ -88,10 +124,10 @@ async def _processar_dados(
     elif resultado.motivo == "insuficiente":
         agendamento.status = "rascunho"
         validacao = Validacao(valido=False, motivo=resultado.motivo)
-        if any(finais.get(k) for k in ("cliente", "servico", "data", "hora")):
+        if any(finais.get(k) for k in ("cliente_id", "servico", "data", "hora")):
             db.salvar_agendamento(
                 sessao_id,
-                finais.get("cliente"),
+                finais.get("cliente_id"),
                 finais.get("servico"),
                 finais.get("data"),
                 finais.get("hora"),
@@ -110,7 +146,7 @@ async def _processar_dados(
         )
         db.salvar_agendamento_rejeitado(
             sessao_id,
-            finais.get("cliente"),
+            finais.get("cliente_id"),
             finais.get("servico"),
             finais.get("data"),
             finais.get("hora"),
@@ -118,7 +154,7 @@ async def _processar_dados(
         if rascunho is not None:
             db.atualizar_agendamento(
                 rascunho["id"],
-                finais.get("cliente"),
+                finais.get("cliente_id"),
                 finais.get("servico"),
                 None,
                 None,
@@ -127,7 +163,7 @@ async def _processar_dados(
         else:
             db.salvar_agendamento(
                 sessao_id,
-                finais.get("cliente"),
+                finais.get("cliente_id"),
                 finais.get("servico"),
                 None,
                 None,
@@ -242,3 +278,51 @@ async def messagens_da_sessao(sessao_id: int):
 @app.get("/agendamentos")
 async def listar_agendamentos(limit: int = Query(100, ge=1, le=1000)):
     return db.listar_agendamentos()[-limit:]
+
+
+@app.get("/clientes", response_model=list[Cliente])
+async def listar_clientes():
+    return db.listar_clientes()
+
+
+@app.get("/clientes/{cliente_id}", response_model=Cliente)
+async def obter_cliente_endpoint(cliente_id: int):
+    cliente = db.obter_cliente(cliente_id)
+    if cliente is None:
+        raise HTTPException(404, "Cliente não encontrado")
+    return cliente
+
+
+@app.post("/clientes", response_model=Cliente, status_code=201)
+async def criar_cliente_endpoint(cliente: ClienteCreate):
+    if db.obter_cliente_por_telefone(cliente.telefone) is not None:
+        raise HTTPException(409, "Já existe um cliente com esse telefone")
+    cliente_id = db.criar_cliente(cliente.nome, cliente.telefone)
+    return db.obter_cliente(cliente_id)
+
+
+@app.put("/clientes/{cliente_id}", response_model=Cliente)
+async def atualizar_cliente_endpoint(cliente_id: int, cliente: ClienteUpdate):
+    existente = db.obter_cliente(cliente_id)
+    if existente is None:
+        raise HTTPException(404, "Cliente não encontrado")
+
+    novo_nome = cliente.nome if cliente.nome is not None else existente["nome"]
+    novo_telefone = (
+        cliente.telefone if cliente.telefone is not None else existente["telefone"]
+    )
+
+    if novo_telefone != existente["telefone"]:
+        outro = db.obter_cliente_por_telefone(novo_telefone)
+        if outro is not None and outro["id"] != cliente_id:
+            raise HTTPException(409, "Já existe um cliente com esse telefone")
+
+    db.atualizar_cliente(cliente_id, novo_nome, novo_telefone)
+    return db.obter_cliente(cliente_id)
+
+
+@app.delete("/clientes/{cliente_id}", status_code=204)
+async def remover_cliente_endpoint(cliente_id: int):
+    if db.obter_cliente(cliente_id) is None:
+        raise HTTPException(404, "Cliente não encontrado")
+    db.remover_cliente(cliente_id)

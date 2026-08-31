@@ -24,16 +24,24 @@ CREATE TABLE IF NOT EXISTS mensagens (
     FOREIGN KEY (sessao_id) REFERENCES sessoes (id)
 );
 
+CREATE TABLE IF NOT EXISTS clientes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nome TEXT NOT NULL,
+    telefone TEXT UNIQUE NOT NULL,
+    criado_em TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS agendamentos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     sessao_id INTEGER NOT NULL,
-    cliente TEXT,
+    cliente_id INTEGER,
     servico TEXT,
     data TEXT,
     hora TEXT,
     status TEXT NOT NULL,
     criado_em TEXT NOT NULL,
-    FOREIGN KEY (sessao_id) REFERENCES sessoes (id)
+    FOREIGN KEY (sessao_id) REFERENCES sessoes (id),
+    FOREIGN KEY (cliente_id) REFERENCES clientes (id)
 );
 """
 
@@ -101,6 +109,50 @@ def listar_mensagens(sessao_id: int):
         return [dict(r) for r in rows]
 
 
+def criar_cliente(nome: str, telefone: str) -> int:
+    with _tx() as conn:
+        cur = conn.execute(
+            "INSERT INTO clientes (nome, telefone, criado_em) VALUES (?, ?, ?)",
+            (nome, telefone, _now()),
+        )
+        return cur.lastrowid
+
+
+def obter_cliente_por_telefone(telefone: str):
+    with _tx() as conn:
+        row = conn.execute(
+            "SELECT * FROM clientes WHERE telefone = ?", (telefone,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def obter_cliente(cliente_id: int):
+    with _tx() as conn:
+        row = conn.execute(
+            "SELECT * FROM clientes WHERE id = ?", (cliente_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def listar_clientes():
+    with _tx() as conn:
+        rows = conn.execute("SELECT * FROM clientes ORDER BY id").fetchall()
+        return [dict(r) for r in rows]
+
+
+def atualizar_cliente(cliente_id: int, nome: str, telefone: str) -> None:
+    with _tx() as conn:
+        conn.execute(
+            "UPDATE clientes SET nome = ?, telefone = ? WHERE id = ?",
+            (nome, telefone, cliente_id),
+        )
+
+
+def remover_cliente(cliente_id: int) -> None:
+    with _tx() as conn:
+        conn.execute("DELETE FROM clientes WHERE id = ?", (cliente_id,))
+
+
 def obter_rascunho_ativo(sessao_id: int) -> Optional[dict]:
     with _tx() as conn:
         row = conn.execute(
@@ -113,22 +165,22 @@ def obter_rascunho_ativo(sessao_id: int) -> Optional[dict]:
 
 
 def atualizar_agendamento(
-    agendamento_id: int, cliente, servico, data, hora, status
+    agendamento_id: int, cliente_id, servico, data, hora, status
 ) -> None:
     with _tx() as conn:
         conn.execute(
             """UPDATE agendamentos
-               SET cliente = ?, servico = ?, data = ?, hora = ?, status = ?, criado_em = ?
+               SET cliente_id = ?, servico = ?, data = ?, hora = ?, status = ?, criado_em = ?
                WHERE id = ?""",
-            (cliente, servico, data, hora, status, _now(), agendamento_id),
+            (cliente_id, servico, data, hora, status, _now(), agendamento_id),
         )
 
 
-def salvar_agendamento(sessao_id: int, cliente, servico, data, hora, status="rascunho") -> int:
+def salvar_agendamento(sessao_id: int, cliente_id, servico, data, hora, status="rascunho") -> int:
     rascunho = obter_rascunho_ativo(sessao_id)
     if rascunho is not None:
         campos = (
-            ("cliente", cliente),
+            ("cliente_id", cliente_id),
             ("servico", servico),
             ("data", data),
             ("hora", hora),
@@ -139,7 +191,7 @@ def salvar_agendamento(sessao_id: int, cliente, servico, data, hora, status="ras
                 merged[chave] = valor
         atualizar_agendamento(
             rascunho["id"],
-            merged["cliente"],
+            merged["cliente_id"],
             merged["servico"],
             merged["data"],
             merged["hora"],
@@ -149,19 +201,19 @@ def salvar_agendamento(sessao_id: int, cliente, servico, data, hora, status="ras
 
     with _tx() as conn:
         cur = conn.execute(
-            """INSERT INTO agendamentos (sessao_id, cliente, servico, data, hora, status, criado_em)
+            """INSERT INTO agendamentos (sessao_id, cliente_id, servico, data, hora, status, criado_em)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (sessao_id, cliente, servico, data, hora, status, _now()),
+            (sessao_id, cliente_id, servico, data, hora, status, _now()),
         )
         return cur.lastrowid
 
 
-def salvar_agendamento_rejeitado(sessao_id: int, cliente, servico, data, hora) -> int:
+def salvar_agendamento_rejeitado(sessao_id: int, cliente_id, servico, data, hora) -> int:
     with _tx() as conn:
         cur = conn.execute(
-            """INSERT INTO agendamentos (sessao_id, cliente, servico, data, hora, status, criado_em)
+            """INSERT INTO agendamentos (sessao_id, cliente_id, servico, data, hora, status, criado_em)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (sessao_id, cliente, servico, data, hora, "rejeitado", _now()),
+            (sessao_id, cliente_id, servico, data, hora, "rejeitado", _now()),
         )
         return cur.lastrowid
 
@@ -209,5 +261,12 @@ def _hora(texto) -> Optional[time]:
 
 def listar_agendamentos():
     with _tx() as conn:
-        rows = conn.execute("SELECT * FROM agendamentos ORDER BY id").fetchall()
+        rows = conn.execute(
+            """SELECT a.id, a.sessao_id, a.cliente_id, c.nome AS cliente,
+                      c.telefone AS telefone, a.servico, a.data, a.hora, a.status,
+                      a.criado_em
+               FROM agendamentos a
+               LEFT JOIN clientes c ON c.id = a.cliente_id
+               ORDER BY a.id"""
+        ).fetchall()
         return [dict(r) for r in rows]

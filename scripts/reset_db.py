@@ -19,6 +19,7 @@ def main() -> None:
             "DELETE FROM agendamentos; "
             "DELETE FROM mensagens; "
             "DELETE FROM sessoes; "
+            "DELETE FROM clientes; "
         )
         conn.execute("DELETE FROM sqlite_sequence;")
 
