@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
+import re
 from typing import Optional
 
 from dateutil import parser as dateutil_parser
@@ -25,11 +26,17 @@ class ValidacaoResult:
     hora: Optional[time] = None
 
 
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
 def parse_data(valor: str) -> Optional[date]:
     if not valor:
         return None
+    texto = str(valor).strip()
     try:
-        return dateutil_parser.parse(str(valor)).date()
+        if _ISO_DATE_RE.match(texto):
+            return dateutil_parser.parse(texto).date()
+        return dateutil_parser.parse(texto, dayfirst=True).date()
     except (ValueError, TypeError, OverflowError):
         return None
 
