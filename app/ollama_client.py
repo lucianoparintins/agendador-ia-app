@@ -1,6 +1,7 @@
 import ast
 import json
 import re
+from datetime import datetime
 from typing import AsyncIterator, List, Optional
 
 import httpx
@@ -21,6 +22,14 @@ SYSTEM_PROMPT = (
 )
 
 _JSON_RE = re.compile(r"\{.*?\}", re.DOTALL)
+
+
+def _system_prompt() -> str:
+    agora = datetime.now()
+    return (
+        f"Data e hora atuais: {agora.strftime('%d/%m/%Y %H:%M')}.\n"
+        + SYSTEM_PROMPT
+    )
 
 
 def _extrair_json(texto: str) -> Optional[dict]:
@@ -74,7 +83,7 @@ class OllamaClient:
 
     @staticmethod
     def _montar_messages(historico: List[dict], nova_mensagem: str) -> List[dict]:
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        messages = [{"role": "system", "content": _system_prompt()}]
         messages.extend(historico)
         messages.append({"role": "user", "content": nova_mensagem})
         return messages
@@ -118,7 +127,7 @@ class OllamaClient:
             {
                 "role": "system",
                 "content": (
-                    SYSTEM_PROMPT
+                    _system_prompt()
                     + "\n\nATENÇÃO: "
                     + rejeicao_texto
                     + " Informe o cliente educadamente sobre a indisponibilidade "
