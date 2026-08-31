@@ -120,6 +120,7 @@ Situação em **30/08/2026** — terceira iteração (streaming de tokens) imple
 - Novos campos: `status` (`confirmado`/`rascunho`/`rejeitado`) no agendamento e `validacao: {valido, motivo}` na resposta do `/chat`.
 - Rejeição com reprocessamento: quando o horário é inválido, o Ollama é reconsultado informando o motivo e a `reply` pede um novo horário ao cliente; o registro é salvo como `rejeitado`.
 - `GET /health`, `GET /sessoes`, `GET /sessoes/{id}/mensagens`, `GET /agendamentos`.
+- **Frontend/UI de chat:** diretório `client/` com `index.html` simples (sem build) que conversa com o `/chat` via SSE. Suba a API (`uvicorn app.main:app --reload`) e sirva o client (`python -m http.server 8080 -d client`), abrindo `http://localhost:8080`.
 - Persistência SQLite completa: sessões, histórico de mensagens e agendamentos (banco `app/agendamento.db`).
 
 **Validado ponta a ponta (curl)**
@@ -141,4 +142,3 @@ Situação em **30/08/2026** — terceira iteração (streaming de tokens) imple
 **Próximas evoluções (não implementadas)**
 - Disponibilidade injetada no prompt (o modelo já conhece a agenda antes de responder).
 - Fluxo de confirmação explícita pelo cliente antes de salvar como `confirmado`.
-- Frontend/UI de chat.

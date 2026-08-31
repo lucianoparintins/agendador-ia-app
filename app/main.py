@@ -3,6 +3,7 @@ import json
 from typing import AsyncIterator, Optional, Tuple
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from . import agenda, db
@@ -19,6 +20,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Agendador IA", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/health")

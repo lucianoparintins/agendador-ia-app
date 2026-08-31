@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agendador IA — Chat</title>
+<style>
+  body { font-family: sans-serif; margin: 0; max-width: 640px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; }
+  #chat { height: 60vh; overflow-y: auto; border: 1px solid #ccc; border-radius: 8px; padding: 12px; margin-bottom: 12px; background: #fafafa; }
+  .msg { max-width: 80%; padding: 8px 12px; border-radius: 12px; margin: 6px 0; white-space: pre-wrap; }
+  .user { margin-left: auto; background: #dcf8c6; text-align: right; }
+  .assistant { background: #fff; border: 1px solid #eee; }
+  .status { color: #999; font-style: italic; font-size: 13px; }
+  #form { display: flex; gap: 8px; }
+  #input { flex: 1; padding: 10px; border: 1px solid #ccc; border-radius: 8px; }
+  button { padding: 10px 16px; border: none; border-radius: 8px; background: #4caf50; color: #fff; cursor: pointer; }
+  button:disabled { opacity: .5; }
+</style>
+</head>
+<body>
+<h1>Agendador IA</h1>
+<div id="chat"></div>
+<form id="form">
+  <input id="input" type="text" placeholder="Ex.: quero agendar um corte amanhã às 10h" autocomplete="off">
+  <button id="send" type="submit">Enviar</button>
+</form>
+
+<script>
+let sessaoId = null;
+
+const chat = document.getElementById("chat");
+const form = document.getElementById("form");
+const input = document.getElementById("input");
+const send = document.getElementById("send");
+
+function addMsg(role, text) {
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  div.textContent = text;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+  return div;
+}
+
+function addStatus(text) {
+  const div = document.createElement("div");
+  div.className = "status";
+  div.textContent = text;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+  return div;
+}
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const mensagem = input.value.trim();
+  if (!mensagem) return;
+
+  input.value = "";
+  addMsg("user", mensagem);
+  send.disabled = true;
+
+  const bubble = addMsg("assistant", "");
+  const status = addStatus("digitando…");
+  let buffer = "";
+
+  const resp = await fetch("http://localhost:8000/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mensagem, sessao_id: sessaoId, stream: true }),
+  });
+
+  if (!resp.ok) {
+    status.remove();
+    bubble.textContent = "Erro " + resp.status + ": " + await resp.text();
+    send.disabled = false;
+    return;
+  }
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    pending += decoder.decode(value, { stream: true });
+
+    let idx;
+    while ((idx = pending.indexOf("\n\n")) !== -1) {
+      const event = pending.slice(0, idx);
+      pending = pending.slice(idx + 2);
+      const line = event.split("\n").find((l) => l.startsWith("data:"));
+      if (!line) continue;
+      const data = line.slice(5).trim();
+      if (data === "[DONE]") continue;
+
+      let evt;
+      try { evt = JSON.parse(data); } catch { continue; }
+
+      if (evt.type === "token") {
+        buffer += evt.content;
+        bubble.textContent = buffer;
+      } else if (evt.type === "correcao") {
+        buffer = evt.reply;
+        bubble.textContent = buffer;
+        status.textContent = "Horário rejeitado — nova resposta:";
+      } else if (evt.type === "done") {
+        sessaoId = evt.sessao_id;
+        status.remove();
+        if (evt.validacao && evt.validacao.valido === false) {
+          addStatus("Validação: " + (evt.validacao.motivo || "inválido"));
+        }
+        if (evt.agendamento && evt.agendamento.status) {
+          addStatus("Agendamento: " + evt.agendamento.status);
+        }
+      }
+      chat.scrollTop = chat.scrollHeight;
+    }
+  }
+
+  if (!bubble.textContent) bubble.textContent = "(sem resposta)";
+  if (status.parentNode) status.remove();
+  send.disabled = false;
+});
+</script>
+</body>
+</html>
