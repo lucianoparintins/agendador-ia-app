@@ -2,7 +2,7 @@
 
 Serviço REST em FastAPI para agendamento de serviços (barbearia/salão), usando o modelo `gemma2:2b` do Ollama local e persistência em SQLite.
 
-> **Estado atual:** validado ponta a ponta, incluindo regras de agenda (expediente, duração de 1h e conflito) — ver seção [Estado atual](#estado-atual).
+> **Estado atual:** validado ponta a ponta, incluindo regras de agenda (expediente, duração de 1h e conflito), tratamento de datas relativas e consolidação de agendamento por sessão — ver seção [Estado atual](#estado-atual).
 
 ## Pré-requisitos
 
@@ -86,8 +86,22 @@ Validação de agendamento no backend (`app/agenda.py`):
 - **Duração do serviço:** fixa de **1h** por agendamento.
 - **Conflito:** rejeita horário que se sobreponha a um agendamento `confirmado` no mesmo dia.
 - **Passado:** rejeita data/hora já ocorridas.
+- **Datas relativas:** o backend reconhece e resolve `hoje`, `amanhã`, `depois de amanhã`, `ontem` e `próxima <dia da semana>` para a data concreta (`DD/MM/YYYY`), usando a data atual do servidor.
+- **Datas improváveis:** datas no passado ou muito distantes no futuro (fora de uma janela de 90 dias) são tratadas como dado **insuficiente** (não são rejeitadas como erro do cliente), pedindo que a data seja confirmada novamente.
 
-Quando os dados são **insuficientes** (faltando data/hora), o agendamento é salvo como `rascunho`. Quando **inválido** (`data_invalida`, `hora_invalida`, `no_passado`, `fora_expediente`, `conflito`), o registro é salvo com `status=rejeitado`, a resposta é reprocessada pelo Ollama e a `reply` pede um novo horário ao cliente. O campo `validacao` da resposta do `/chat` informa `{valido, motivo}`.
+Quando os dados são **insuficientes** (faltando data/hora ou data improvável), o agendamento é salvo como `rascunho`. Quando **inválido** (`data_invalida`, `hora_invalida`, `no_passado`, `fora_expediente`, `conflito`), o registro é salvo com `status=rejeitado`, a resposta é reprocessada pelo Ollama e a `reply` pede um novo horário ao cliente. O campo `validacao` da resposta do `/chat` informa `{valido, motivo}`.
+
+### Consolidação de agendamento por sessão
+
+Cada `sessao_id` mantém **no máximo um agendamento ativo** (`rascunho`). A cada mensagem, os dados extraídos são **mesclados** nesse rascunho (campos novos não-nulos sobrescrevem os existentes), permitindo que o cliente informe nome, serviço, data e horário em mensagens separadas sem gerar registros duplicados:
+
+- **Confirmado** → o rascunho evolui para `status=confirmado` (um único registro por intenção).
+- **Rejeitado** → grava um registro `rejeitado` no histórico e abre um novo rascunho (herdando `cliente` e `servico`) para o cliente corrigir apenas data/horário.
+- **Insuficiente** → mantém/atualiza o rascunho ativo.
+
+## Data e hora atuais para o modelo
+
+O `system prompt` injeta a **data e hora atuais do servidor** (formato `DD/MM/YYYY HH:MM`) a cada chamada, para que o modelo não assuma ano/dia errado ao interpretar pedidos relativos. O prompt também orienta o modelo a calcular datas relativas a partir dessa base, nunca usar anos passados e, se não tiver certeza, deixar o campo `data` como `null` para o backend calcular.
 
 ## Estrutura do projeto
 
@@ -102,25 +116,32 @@ agendador-ia-app/
 ├── app/
 │   ├── __init__.py
 │   ├── main.py               # App FastAPI, rotas, startup (cria tabelas)
-│   ├── db.py                 # sqlite3, conexão, tabelas, CRUD e verificação de conflito
-│   ├── agenda.py             # expediente, parsing e validação de data/hora
-│   ├── ollama_client.py      # chamada assíncrona a /api/chat + parser JSON + reprocessamento
+│   ├── db.py                 # sqlite3, conexão, tabelas, CRUD, merge por sessão e verificação de conflito
+│   ├── agenda.py             # expediente, parsing/validação de data/hora, datas relativas e plausibilidade
+│   ├── ollama_client.py      # chamada assíncrona a /api/chat + parser JSON + data atual no prompt
 │   └── schema.py             # Models Pydantic
+├── scripts/
+│   └── reset_db.py           # zera o banco sqlite (apaga todos os dados)
 └── README.md
 ```
 
 ## Estado atual
 
-Situação em **30/08/2026** — terceira iteração (streaming de tokens) implementada:
+Situação em **30/08/2026** — iterações de datas relativas, consolidação por sessão e interface HTML implementadas:
 
 **Implementado**
 - `POST /chat`: recebe mensagem, recupera/cria sessão no SQLite, reconstrói o histórico, consulta o `gemma2:2b` via Ollama local e retorna `{ sessao_id, reply, agendamento?, validacao? }`. Mensagens do usuário e do assistente são persistidas.
-- **Streaming de tokens (`stream=True`):** `/chat` passa a aceitar `"stream": true` e retorna `text/event-stream` (SSE) transmitindo os tokens ao vivo. Eventos: `token` (cada pedaço), `correcao` (quando o horário é rejeitado e a reply é reprocessada), `done` (com `agendamento`/`validacao`) e terminador `[DONE]`. Apenas a reply final é persistida no histórico.
+- **Streaming de tokens (`stream=True`):** `/chat` aceita `"stream": true` e retorna `text/event-stream` (SSE) transmitindo os tokens ao vivo. Eventos: `token`, `correcao` (rejeição reprocessada), `done` (com `agendamento`/`validacao`) e terminador `[DONE]`. Apenas a reply final é persistida.
 - Validação de agendamento no backend (`app/agenda.py`): expediente (seg–sex 9h–18h, sáb 9h–13h, domingo fechado), duração fixa de 1h, rejeição de data passada e de conflito com agendamentos `confirmados`.
+- **Datas relativas:** `resolver_data_relativa()` converte `hoje`, `amanhã`, `depois de amanhã`, `ontem` e `próxima <dia>` em data concreta; **plausibilidade** (`data_plausivel()`) trata datas passadas/muito distantes como dado insuficiente em vez de erro do cliente.
+- **Data/hora atuais no prompt:** o system prompt injeta a data/hora do servidor a cada chamada, para o modelo não assumir ano/dia errado; o prompt orienta a não inventar datas e a deixar `data: null` quando inseguro.
+- **Consolidação por sessão:** no máximo 1 agendamento ativo (`rascunho`) por `sessao_id`, com merge progressivo dos dados entre mensagens; confirmado evolui o rascunho; rejeitado grava histórico e abre novo rascunho (herdando cliente/serviço).
 - Novos campos: `status` (`confirmado`/`rascunho`/`rejeitado`) no agendamento e `validacao: {valido, motivo}` na resposta do `/chat`.
-- Rejeição com reprocessamento: quando o horário é inválido, o Ollama é reconsultado informando o motivo e a `reply` pede um novo horário ao cliente; o registro é salvo como `rejeitado`.
+- Rejeição com reprocessamento: quando o horário é inválido, o Ollama é reconsultado informando o motivo e a `reply` pede um novo horário; o registro é salvo como `rejeitado`.
+- **Datas em DD/MM/YYYY:** datas capturadas são normalizadas e persistidas no formato dia/mês/ano (inclusive em ISO `AAAA-MM-DD`), evitando inversão de dia/mês.
 - `GET /health`, `GET /sessoes`, `GET /sessoes/{id}/mensagens`, `GET /agendamentos`.
 - **Frontend/UI de chat:** diretório `client/` com `index.html` simples (sem build) que conversa com o `/chat` via SSE. Suba a API (`uvicorn app.main:app --reload`) e sirva o client (`python -m http.server 8080 -d client`), abrindo `http://localhost:8080`.
+- **Script de reset:** `scripts/reset_db.py` zera o banco SQLite (confirma antes de apagar).
 - Persistência SQLite completa: sessões, histórico de mensagens e agendamentos (banco `app/agendamento.db`).
 
 **Validado ponta a ponta (curl)**
@@ -128,7 +149,9 @@ Situação em **30/08/2026** — terceira iteração (streaming de tokens) imple
 - Domingo ou horário fora do expediente → `status=rejeitado` e `validacao.motivo=fora_expediente`, com `reply` pedindo novo horário.
 - Horário conflitante com um agendamento `confirmado` → `status=rejeitado` e `validacao.motivo=conflito`.
 - Mensagem sem data/hora → `status=rascunho`.
-- Data no passado → `status=rejeitado` e `validacao.motivo=no_passado`.
+- Data no passado ou improvável → tratada como `insuficiente` (não rejeição indevida).
+- Data relativa ("amanhã" etc.) → resolvida para a data concreta correta.
+- Informações dadas em mensagens separadas → consolidadas em um único registro confirmado.
 - Streaming (`curl -N` com `stream=true`): eventos `token` ao vivo, `done` com `agendamento`/`validacao`, e `correcao` nos casos de rejeição.
 - `GET /health` reportou `{"status": "ok", "ollama_reachable": true}`.
 
@@ -136,8 +159,9 @@ Situação em **30/08/2026** — terceira iteração (streaming de tokens) imple
 - O histórico completo é reconstruído no servidor a partir do `sessao_id` (fonte da verdade = SQLite).
 - No streaming, a validação acontece ao final (depende do texto completo). Quando rejeitado, o texto inicial já transmitido é substituído pela reply reprocessada via evento `correcao`; apenas a reply final é gravada.
 - **Correção aplicada durante o build:** o `gemma2:2b` retorna JSON com aspas simples (não compatível com `json.loads` estrito). O parser em `ollama_client.py` tenta `json.loads` e, se falhar, usa `ast.literal_eval` como fallback — normalizando `null`/`true`/`false` do JSON para `None`/`True`/`False`. Isso cobre blocos com campos desconhecidos (`{'data': null}`), comuns nas respostas.
-- Parsing de data/hora usa `python-dateutil` (aceita AAAA-MM-DD, DD/MM/AAAA, HH:MM, HHhMM etc.). Atenção: datas ambíguas como `06/09/2026` são interpretadas em formato mês/dia; para evitar surpresa, prefira o formato ISO `AAAA-MM-DD`.
+- Parsing de data/hora usa `python-dateutil`. O `parse_data` usa `dayfirst=True` para formatos `DD/MM/AAAA` (e detecta ISO `AAAA-MM-DD` separadamente), garantindo que dia e mês não sejam invertidos.
 - A validação acontece apenas em `data` + `hora`; cliente/serviço não são validados.
+- O modelo `gemma2:2b` é instável na geração do JSON; o reforço no prompt reduz, mas não elimina, respostas sem bloco JSON.
 
 **Próximas evoluções (não implementadas)**
 - Disponibilidade injetada no prompt (o modelo já conhece a agenda antes de responder).
