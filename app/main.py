@@ -47,6 +47,7 @@ MOTIVO_TEXTO = {
 async def _processar_dados(
     sessao_id: int, dados: dict, historico
 ) -> Tuple[str, Optional[Agendamento], Optional[Validacao]]:
+    dados["data"] = agenda.resolver_data_relativa(dados.get("data"))
     dados["data"] = agenda.formatar_data(dados.get("data"))
     agendamento = Agendamento(**{
         "cliente": dados.get("cliente"),

@@ -48,6 +48,72 @@ def formatar_data(valor: str) -> Optional[str]:
     return d.strftime("%d/%m/%Y")
 
 
+DIAS_SEMANA = {
+    "segunda": 0,
+    "segunda-feira": 0,
+    "terca": 1,
+    "terça": 1,
+    "terca-feira": 1,
+    "terça-feira": 1,
+    "quarta": 2,
+    "quarta-feira": 2,
+    "quinta": 3,
+    "quinta-feira": 3,
+    "sexta": 4,
+    "sexta-feira": 4,
+    "sabado": 5,
+    "sábado": 5,
+    "domingo": 6,
+}
+
+
+def resolver_data_relativa(valor) -> Optional[str]:
+    if not valor:
+        return valor
+    texto = "_".join(str(valor).strip().lower().split())
+
+    if texto in ("hoje",):
+        base = date.today()
+    elif texto in ("amanha", "amanhã", "dia_seguinte", "próximo_dia", "proximo_dia"):
+        base = date.today() + timedelta(days=1)
+    elif texto in (
+        "depois_de_amanha",
+        "depois_de_amanhã",
+        "passado_amanha",
+        "passado_amanhã",
+    ):
+        base = date.today() + timedelta(days=2)
+    elif texto in ("ontem",):
+        base = date.today() - timedelta(days=1)
+    elif texto.startswith("proxima_") or texto.startswith("próxima_") or texto.startswith("proximo_") or texto.startswith("próximo_"):
+        palavra = texto.split("_", 1)[1]
+        alvo = DIAS_SEMANA.get(palavra)
+        if alvo is None:
+            return valor
+        hoje = date.today().weekday()
+        delta = (alvo - hoje) % 7
+        if delta == 0:
+            delta = 7
+        base = date.today() + timedelta(days=delta)
+    else:
+        return valor
+
+    return base.strftime("%d/%m/%Y")
+
+
+JANELA_DIAS_FUTURO = 90
+
+
+def data_plausivel(valor) -> bool:
+    if not valor:
+        return False
+    d = parse_data(valor)
+    if d is None:
+        return False
+    hoje = date.today()
+    return hoje <= d <= hoje + timedelta(days=JANELA_DIAS_FUTURO)
+
+
 def parse_hora(valor: str) -> Optional[time]:
     if not valor:
         return None
@@ -88,6 +154,9 @@ def validar_agendamento(data_raw, hora_raw) -> ValidacaoResult:
         return ValidacaoResult(valido=False, motivo="data_invalida")
     if h is None:
         return ValidacaoResult(valido=False, motivo="hora_invalida")
+
+    if not data_plausivel(data_raw):
+        return ValidacaoResult(valido=False, motivo="insuficiente")
 
     agora = datetime.now()
     horario = datetime.combine(d, h)

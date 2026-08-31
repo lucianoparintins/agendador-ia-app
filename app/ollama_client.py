@@ -18,6 +18,10 @@ SYSTEM_PROMPT = (
     "{'cliente': ..., 'servico': ..., 'data': ..., 'hora': ...} "
     "preenchendo apenas os campos que já conhece (null para os desconhecidos). "
     "Sempre apresente datas no formato DD/MM/YYYY. "
+    "Quando o cliente usar datas relativas (hoje, amanhã, depois de amanhã, "
+    "próxima semana, próxima <dia da semana>), calcule a data exata a partir da "
+    "data atual fornecida. Nunca use anos passados nem datas inventadas; se não "
+    "tiver certeza da data, deixe o campo data como null para o backend calcular. "
     "Responda em português do Brasil."
 )
 
