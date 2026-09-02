@@ -97,5 +97,9 @@ agendador-ia-app/
     - `feat(agenda): adiciona validacao de conflito de horarios`
     - `fix(ollama): corrige parsing de json com aspas simples`
     - `docs: atualiza guia de desenvolvimento no GEMINI.md`
+- **Operações com Git e Proibição de Push**:
+  - Commits devem ser sempre **locais**.
+  - **NUNCA** executar `git push` de forma autônoma ou automática. A publicação remota é controlada exclusivamente pelo usuário ou sob ordem expressa.
+
 
 

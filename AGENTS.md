@@ -71,5 +71,9 @@ python3 scripts/reset_db.py
     - `test`: Testes unitários ou de integração.
     - `chore`: Atualização de configurações, scripts auxiliares ou dependências.
     - `style`: Ajustes estéticos/formatação sem alteração de lógica.
+- **Proibição de Push Automático**:
+  - **JAMAIS** executar `git push` automaticamente ou sem autorização explícita do usuário.
+  - Todos os commits devem ser estritamente **locais**. O envio para o repositório remoto fica sob responsabilidade exclusiva do usuário ou mediante solicitação direta.
+
 
 
