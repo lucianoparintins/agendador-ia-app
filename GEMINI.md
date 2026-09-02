@@ -82,3 +82,8 @@ agendador-ia-app/
 - **Persistência Segura**: Usar parâmetros `?` nas consultas SQL do SQLite para evitar injeção de SQL.
 - **Data e Hora**: Normalizar formatos no banco e respeitar `dayfirst=True` para o padrão brasileiro `DD/MM/YYYY`.
 - **Tratamento LLM**: Nunca assumir que o modelo retornará um JSON perfeitamente válido. Sempre tratar via `_extrair_json` e prever fallbacks.
+- **Padrão de Commits**:
+  - Todas as mensagens de commit devem ser escritas em **Português do Brasil (pt-BR)**.
+  - Iniciar com verbo no presente do indicativo ou infinitivo/imperativo padronizado do projeto (ex.: *Adiciona...*, *Corrige...*, *Atualiza...*, *Implementa...*, *Remove...*).
+  - Manter mensagens claras, objetivas, sem ponto final na linha de assunto (máximo 72 caracteres).
+
