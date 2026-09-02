@@ -78,8 +78,13 @@ agendador-ia-app/
 
 ## 5. Convenções de Desenvolvimento
 
-- **Código Limpo e Tipado**: Usar type hints em todas as funções (`typing.Optional`, `list`, etc.).
+- **Código Limpo e Modular (Clean Code)**:
+  - Manter métodos e funções pequenos, coesos e com responsabilidade única (SRP).
+  - Organizar a estrutura em módulos especializados, evitando concentrar muita lógica em um único arquivo.
+  - Usar tipagem estrita (`typing.Optional`, `list`, etc.) e nomes descritivos e autoexplicativos.
+  - Refatorar métodos extensos em funções auxiliares menores ao criar ou modificar código.
 - **Persistência Segura**: Usar parâmetros `?` nas consultas SQL do SQLite para evitar injeção de SQL.
+
 - **Data e Hora**: Normalizar formatos no banco e respeitar `dayfirst=True` para o padrão brasileiro `DD/MM/YYYY`.
 - **Tratamento LLM**: Nunca assumir que o modelo retornará um JSON perfeitamente válido. Sempre tratar via `_extrair_json` e prever fallbacks.
 - **Padrão de Commits (Conventional Commits)**:

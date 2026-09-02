@@ -53,6 +53,13 @@ python3 scripts/reset_db.py
    - O padrão principal do sistema no chat e persistência atual é dia/mês/ano (`DD/MM/YYYY`).
    - Sempre utilize `dayfirst=True` ao fazer parsing com `dateutil_parser` em datas não-ISO para não inverter dia e mês.
 
+4. **Princípios de Clean Code e Modularidade**:
+   - **Funções e Métodos Pequenos**: Cada função/método deve realizar estritamente uma única responsabilidade (Single Responsibility Principle) e ter tamanho conciso.
+   - **Estrutura Organizada de Arquivos**: Manter arquivos focados e modulares, evitando "arquivos Deus" (God files).
+   - **Nomes Intuitivos e Autoexplicativos**: Escolher nomes claros para variáveis, funções e módulos, reduzindo a necessidade de comentários óbvios.
+   - **Refatoração Contínua**: Ao adicionar ou alterar código, refatorar trechos complexos em funções auxiliares menores e reutilizáveis.
+
+
 ---
 
 ## 3. Diretrizes para Modificações
