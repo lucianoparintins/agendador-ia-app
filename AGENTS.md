@@ -60,13 +60,16 @@ python3 scripts/reset_db.py
 - **Não altere o schema do banco sem migração/ajuste em `SCHEMA`**: O banco é criado sob demanda via `db.init_db()` usando `CREATE TABLE IF NOT EXISTS`. Caso adicione colunas, garanta compatibilidade ou documente a necessidade de recriação do banco.
 - **Preservação de Documentação**: Se alterar comportamentos de endpoints ou regras de validação, atualize o `README.md`, `CHANGELOG.md` e os arquivos de especificação correspondentes em `spec/`.
 - **Prevenção de Regressões de Streaming**: Ao alterar rotas do `/chat`, lembre-se de que o endpoint suporta tanto requisições comuns (JSON direto) quanto streaming SSE (`stream: true`). Teste ambos os fluxos.
-- **Padrão de Commits Locais**:
-  - Realizar commits com mensagens sempre em **Português do Brasil (pt-BR)**.
-  - Seguir o padrão do repositório iniciando com verbo no presente do indicativo:
-    - `Adiciona ...` (para novos recursos ou arquivos)
-    - `Corrige ...` (para correções de bugs ou comportamentos inesperados)
-    - `Atualiza ...` (para ajustes, melhorias ou documentação)
-    - `Implementa ...` (para funcionalidades planejadas)
-    - `Remove ...` (para exclusão de código ou arquivos depreciados)
-  - Mensagem concisa (até 72 caracteres no título), sem ponto final.
+- **Padrão de Commits Locais (Conventional Commits)**:
+  - Realizar commits seguindo a especificação do **Conventional Commits** com descrições em **Português do Brasil (pt-BR)**.
+  - Formato: `<tipo>[escopo opcional]: <descrição concisa em minúsculas>` (máximo 72 caracteres, sem ponto final).
+  - Tipos comuns:
+    - `feat`: Novo recurso ou funcionalidade (ex.: `feat(chat): adiciona suporte a cancelamento de agendamento`).
+    - `fix`: Correção de bug (ex.: `fix(agenda): corrige calculo de sobreposicao de horarios`).
+    - `docs`: Documentação (ex.: `docs: atualiza especificacao no AGENTS.md`).
+    - `refactor`: Refatoração interna sem alterar comportamento externo.
+    - `test`: Testes unitários ou de integração.
+    - `chore`: Atualização de configurações, scripts auxiliares ou dependências.
+    - `style`: Ajustes estéticos/formatação sem alteração de lógica.
+
 

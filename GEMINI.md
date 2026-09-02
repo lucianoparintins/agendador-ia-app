@@ -82,8 +82,20 @@ agendador-ia-app/
 - **Persistência Segura**: Usar parâmetros `?` nas consultas SQL do SQLite para evitar injeção de SQL.
 - **Data e Hora**: Normalizar formatos no banco e respeitar `dayfirst=True` para o padrão brasileiro `DD/MM/YYYY`.
 - **Tratamento LLM**: Nunca assumir que o modelo retornará um JSON perfeitamente válido. Sempre tratar via `_extrair_json` e prever fallbacks.
-- **Padrão de Commits**:
-  - Todas as mensagens de commit devem ser escritas em **Português do Brasil (pt-BR)**.
-  - Iniciar com verbo no presente do indicativo ou infinitivo/imperativo padronizado do projeto (ex.: *Adiciona...*, *Corrige...*, *Atualiza...*, *Implementa...*, *Remove...*).
-  - Manter mensagens claras, objetivas, sem ponto final na linha de assunto (máximo 72 caracteres).
+- **Padrão de Commits (Conventional Commits)**:
+  - Seguir a especificação do **Conventional Commits** com a descrição sempre em **Português do Brasil (pt-BR)**.
+  - Formato: `<tipo>[escopo opcional]: <descrição em minúsculas e sem ponto final>`
+  - Tipos padronizados:
+    - `feat`: Nova funcionalidade ou recurso para o usuário/sistema.
+    - `fix`: Correção de bug ou comportamento inesperado.
+    - `docs`: Alterações exclusivamente em documentação (`README.md`, `GEMINI.md`, etc.).
+    - `refactor`: Refatoração de código sem alteração de funcionalidade.
+    - `test`: Criação ou ajuste de testes automatizados.
+    - `chore`: Tarefas de manutenção, dependências, scripts ou configurações auxiliares.
+    - `style`: Ajustes de formatação/lint sem impacto na lógica.
+  - Exemplos:
+    - `feat(agenda): adiciona validacao de conflito de horarios`
+    - `fix(ollama): corrige parsing de json com aspas simples`
+    - `docs: atualiza guia de desenvolvimento no GEMINI.md`
+
 
