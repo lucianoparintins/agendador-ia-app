@@ -6,6 +6,15 @@ O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.
 
 ---
 
+## [1.2.0] - 2026-09-02
+
+### Adicionado
+- **Finalização de Sessão e Reinício Automático**:
+  - Contagem regressiva visual de 5 segundos no cliente web (`client/index.html`) após a confirmação do agendamento.
+  - Bloqueio de novos inputs durante a contagem e recarregamento automático da página (`window.location.reload()`) para iniciar uma nova sessão limpa.
+
+---
+
 ## [1.1.0] - 2026-08-31
 
 ### Adicionado

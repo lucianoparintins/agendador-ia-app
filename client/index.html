@@ -52,6 +52,22 @@ function addStatus(text) {
   return div;
 }
 
+function iniciarContagemReinicio(segundos = 5) {
+  input.disabled = true;
+  send.disabled = true;
+  let restante = segundos;
+  const statusDiv = addStatus(`Agendamento confirmado! Reiniciando atendimento em ${restante}s…`);
+  const interval = setInterval(() => {
+    restante -= 1;
+    if (restante > 0) {
+      statusDiv.textContent = `Agendamento confirmado! Reiniciando atendimento em ${restante}s…`;
+    } else {
+      clearInterval(interval);
+      window.location.reload();
+    }
+  }, 1000);
+}
+
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
   const mensagem = input.value.trim();
@@ -64,6 +80,7 @@ form.addEventListener("submit", async (e) => {
   const bubble = addMsg("assistant", "");
   const status = addStatus("digitando…");
   let buffer = "";
+  let agendamentoConfirmado = false;
 
   const resp = await fetch("http://localhost:8000/chat", {
     method: "POST",
@@ -114,6 +131,9 @@ form.addEventListener("submit", async (e) => {
         }
         if (evt.agendamento && evt.agendamento.status) {
           addStatus("Agendamento: " + evt.agendamento.status);
+          if (evt.agendamento.status === "confirmado") {
+            agendamentoConfirmado = true;
+          }
         }
       }
       chat.scrollTop = chat.scrollHeight;
@@ -122,7 +142,12 @@ form.addEventListener("submit", async (e) => {
 
   if (!bubble.textContent) bubble.textContent = "(sem resposta)";
   if (status.parentNode) status.remove();
-  send.disabled = false;
+
+  if (agendamentoConfirmado) {
+    iniciarContagemReinicio(5);
+  } else {
+    send.disabled = false;
+  }
 });
 </script>
 </body>
