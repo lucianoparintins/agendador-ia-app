@@ -6,6 +6,16 @@ O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.
 
 ---
 
+## [1.3.0] - 2026-09-04
+
+### Adicionado
+- **Documentação e diretrizes do projeto**:
+  - `AGENTS.md` e `GEMINI.md` com guia de operação, arquitetura, convenções de desenvolvimento e regras de negócio para agentes de IA e pair programming.
+  - Adoção de [Conventional Commits](https://www.conventionalcommits.org/) com mensagens em português do Brasil e proibição de push automático (commits estritamente locais).
+  - Atualização do `README.md` e criação do `CHANGELOG.md` com o histórico de versões do projeto.
+
+---
+
 ## [1.2.0] - 2026-09-02
 
 ### Adicionado

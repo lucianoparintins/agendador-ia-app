@@ -2,7 +2,7 @@
 
 Serviço REST em FastAPI para agendamento de serviços (barbearia/salão), usando o modelo `gemma2:2b` do Ollama local e persistência em SQLite.
 
-> **Estado atual:** validado ponta a ponta, incluindo regras de agenda (expediente, duração de 1h e conflito), tratamento de datas relativas e consolidação de agendamento por sessão — ver seção [Estado atual](#estado-atual).
+> **Estado atual:** validado ponta a ponta, incluindo regras de agenda (expediente, duração de 1h e conflito), tratamento de datas relativas, consolidação de agendamento por sessão, cadastro de clientes por telefone e reinício automático da sessão após confirmação — ver seção [Estado atual](#estado-atual).
 
 ## Pré-requisitos
 
@@ -115,10 +115,16 @@ O `system prompt` injeta a **data e hora atuais do servidor** (formato `DD/MM/YY
 agendador-ia-app/
 ├── requirements.txt          # fastapi, uvicorn[standard], httpx, python-dateutil
 ├── .gitignore                # __pycache__, *.db, .venv
+├── README.md
+├── CHANGELOG.md              # histórico de alterações do projeto
+├── AGENTS.md                 # guia para agentes de IA e pair programming
+├── GEMINI.md                 # visão geral, stack e convenções de desenvolvimento
 ├── spec/
 │   ├── 2026-08-30-174308-PLANO.md              # plano do projeto (datado)
 │   ├── 2026-08-30-180847-PLANO-VALIDACAO-AGENDA.md  # plano de validação de agenda
-│   └── 2026-08-30-183828-PLANO-STREAMING.md    # plano de streaming de tokens
+│   ├── 2026-08-30-183828-PLANO-STREAMING.md    # plano de streaming de tokens
+│   ├── 2026-08-30-214212-PLANO-CLIENT-HTML.md  # plano da interface HTML de chat
+│   └── 2026-08-31-165000-PLANO-CLIENTE-TELEFONE.md  # plano de cadastro de clientes
 ├── app/
 │   ├── __init__.py
 │   ├── main.py               # App FastAPI, rotas, startup (cria tabelas)
@@ -126,14 +132,15 @@ agendador-ia-app/
 │   ├── agenda.py             # expediente, parsing/validação de data/hora, datas relativas e plausibilidade
 │   ├── ollama_client.py      # chamada assíncrona a /api/chat + parser JSON + data atual no prompt
 │   └── schema.py             # Models Pydantic
+├── client/
+│   └── index.html            # interface web estática para teste do chat (SSE)
 ├── scripts/
 │   └── reset_db.py           # zera o banco sqlite (apaga todos os dados)
-└── README.md
 ```
 
 ## Estado atual
 
-Situação em **30/08/2026** — iterações de datas relativas, consolidação por sessão e interface HTML implementadas:
+Situação em **04/09/2026** — iterações de datas relativas, consolidação por sessão, interface HTML, cadastro de clientes e reinício automático da sessão implementadas:
 
 **Implementado**
 - `POST /chat`: recebe mensagem, recupera/cria sessão no SQLite, reconstrói o histórico, consulta o `gemma2:2b` via Ollama local e retorna `{ sessao_id, reply, agendamento?, validacao? }`. Mensagens do usuário e do assistente são persistidas.
@@ -147,6 +154,7 @@ Situação em **30/08/2026** — iterações de datas relativas, consolidação 
 - **Datas em DD/MM/YYYY:** datas capturadas são normalizadas e persistidas no formato dia/mês/ano (inclusive em ISO `AAAA-MM-DD`), evitando inversão de dia/mês.
 - `GET /health`, `GET /sessoes`, `GET /sessoes/{id}/mensagens`, `GET /agendamentos`.
 - **Frontend/UI de chat:** diretório `client/` com `index.html` simples (sem build) que conversa com o `/chat` via SSE. Suba a API (`uvicorn app.main:app --reload`) e sirva o client (`python -m http.server 8080 -d client`), abrindo `http://localhost:8080`.
+- **Finalização de sessão e reinício automático:** após um agendamento `confirmado`, o `client/index.html` exibe contagem regressiva de 5 segundos, bloqueia novos inputs e recarrega a página (`window.location.reload()`) para iniciar uma sessão limpa.
 - **Script de reset:** `scripts/reset_db.py` zera o banco SQLite (confirma antes de apagar).
 - **Cadastro de clientes:** entidade `clientes` com `telefone` único. O LLM extrai nome e telefone (máscara `(NN) NNNN-NNNN`). Na primeira vez que um telefone aparece, o cliente é cadastrado automaticamente; em conversas seguintes, o cliente é reutilizado pelo telefone. Quando o telefone não é informado, o bot solicita ao usuário. CRUD completo em `/clientes`.
 - Persistência SQLite completa: sessões, histórico de mensagens e agendamentos (banco `app/agendamento.db`).
@@ -169,6 +177,7 @@ Situação em **30/08/2026** — iterações de datas relativas, consolidação 
 - Parsing de data/hora usa `python-dateutil`. O `parse_data` usa `dayfirst=True` para formatos `DD/MM/AAAA` (e detecta ISO `AAAA-MM-DD` separadamente), garantindo que dia e mês não sejam invertidos.
 - A validação acontece apenas em `data` + `hora`; cliente/serviço não são validados (o cliente é identificado apenas pelo telefone).
 - O modelo `gemma2:2b` é instável na geração do JSON; o reforço no prompt reduz, mas não elimina, respostas sem bloco JSON.
+- **Documentação do projeto:** além deste README, o repositório mantém `AGENTS.md` e `GEMINI.md` (diretrizes para agentes de IA e convenções de desenvolvimento) e `CHANGELOG.md` (histórico de versões). Os commits seguem [Conventional Commits](https://www.conventionalcommits.org/) com mensagens em pt-BR; push automático é proibido (apenas commits locais).
 
 **Próximas evoluções (não implementadas)**
 - Disponibilidade injetada no prompt (o modelo já conhece a agenda antes de responder).
