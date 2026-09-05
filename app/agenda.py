@@ -133,7 +133,8 @@ def _in_expediente(d: date, h: time) -> bool:
     abertura, fechamento = janela
     inicio = time(abertura, 0)
     fim = time(fechamento, 0)
-    return inicio <= h < fim
+    fim_atendimento = (datetime.combine(date.min, h) + timedelta(minutes=DURACAO_MIN)).time()
+    return inicio <= h and fim_atendimento <= fim
 
 
 def _sobrepoe(h1: time, d1: timedelta, h2: time, d2: timedelta) -> bool:
@@ -155,13 +156,14 @@ def validar_agendamento(data_raw, hora_raw) -> ValidacaoResult:
     if h is None:
         return ValidacaoResult(valido=False, motivo="hora_invalida")
 
-    if not data_plausivel(data_raw):
-        return ValidacaoResult(valido=False, motivo="insuficiente")
-
+    # Checar passado ANTES de plausibilidade
     agora = datetime.now()
     horario = datetime.combine(d, h)
     if horario <= agora:
         return ValidacaoResult(valido=False, motivo="no_passado", data=d, hora=h)
+
+    if not data_plausivel(data_raw):
+        return ValidacaoResult(valido=False, motivo="data_invalida")
 
     if not _in_expediente(d, h):
         return ValidacaoResult(valido=False, motivo="fora_expediente", data=d, hora=h)

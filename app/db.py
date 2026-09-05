@@ -58,6 +58,7 @@ def init_db() -> None:
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
@@ -237,7 +238,7 @@ def verificar_conflito(data: str, hora_inicio: str, hora_fim: str) -> bool:
 
 def _data_iso(texto) -> Optional[str]:
     try:
-        return dateutil_parser.parse(str(texto)).date().isoformat()
+        return dateutil_parser.parse(str(texto), dayfirst=True).date().isoformat()
     except (ValueError, TypeError, OverflowError):
         return None
 

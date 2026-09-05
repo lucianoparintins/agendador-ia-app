@@ -6,6 +6,27 @@ O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.
 
 ---
 
+## [1.4.0] - 2026-09-04
+
+### Corrigido
+- **Fluxo multi-turno incremental**:
+  - O rascunho agora é criado/atualizado **sem telefone**; o telefone é obrigatório apenas para confirmar (`rascunho` → `confirmado`).
+  - O telefone do cliente é recuperado do cadastro vinculado ao rascunho quando o LLM o omite no turno atual.
+  - Eliminada a **duplicação da mensagem do usuário** no payload enviado ao Ollama (a mensagem recém-salva já está no histórico).
+  - `SYSTEM_PROMPT` reescrito: JSON com **aspas duplas**, manutenção explícita dos dados de turnos anteriores, um ou dois dados por turno e máscara de telefone `(NN) NNNNN-NNNN`.
+  - Extração de JSON por **contagem de chaves** `{...}` (suporta blocos rodeados de texto), em vez do regex non-greedy `\{.*?\}`.
+  - Janela de contexto limitada às **últimas 14 mensagens** no histórico enviado ao LLM.
+- **Expediente com duração**: o fim do atendimento (início + 60 min) não pode ultrapassar o horário de fechamento.
+- **`no_passado` distinto de `insuficiente`**: datas passadas são rejeitadas como `no_passado`; datas além da janela de 90 dias como `data_invalida`.
+- **`_data_iso`** em `app/db.py` usa `dayfirst=True` (evita inverter dia/mês na checagem de conflito).
+- **`PRAGMA foreign_keys = ON`** ativado na conexão SQLite.
+
+### Adicionado
+- **Persistência da sessão no navegador**: `client/index.html` salva e recupera o `sessao_id` no `sessionStorage`.
+- **Especificação**: `spec/2026-09-04-224600-PLANO-CORRECAO-MULTITURN.md` com os cenários de teste do fluxo multi-turno.
+
+---
+
 ## [1.3.0] - 2026-09-04
 
 ### Adicionado

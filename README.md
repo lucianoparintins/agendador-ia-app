@@ -81,7 +81,7 @@ Arquivo SQLite em `app/agendamento.db` (criado automaticamente na inicializaçã
 
 - `sessoes` — sessões de conversa
 - `mensagens` — histórico (role user/assistant)
-- `clientes` — cadastro de clientes, com `telefone` **único** (formato `(NN) NNNN-NNNN`)
+- `clientes` — cadastro de clientes, com `telefone` **único** (formato `(NN) NNNNN-NNNN`)
 - `agendamentos` — agendamentos extraídos e persistidos, com `status` (`confirmado` / `rascunho` / `rejeitado`) e vínculo (`cliente_id`) ao cadastro do cliente
 
 ## Regras da agenda
@@ -93,9 +93,18 @@ Validação de agendamento no backend (`app/agenda.py`):
 - **Conflito:** rejeita horário que se sobreponha a um agendamento `confirmado` no mesmo dia.
 - **Passado:** rejeita data/hora já ocorridas.
 - **Datas relativas:** o backend reconhece e resolve `hoje`, `amanhã`, `depois de amanhã`, `ontem` e `próxima <dia da semana>` para a data concreta (`DD/MM/YYYY`), usando a data atual do servidor.
-- **Datas improváveis:** datas no passado ou muito distantes no futuro (fora de uma janela de 90 dias) são tratadas como dado **insuficiente** (não são rejeitadas como erro do cliente), pedindo que a data seja confirmada novamente.
+- **Datas improváveis:** datas no passado são rejeitadas como `no_passado`; datas muito distantes no futuro (fora de uma janela de 90 dias) como `data_invalida`. Dados faltantes (sem data/hora) são tratados como `insuficiente`, pedindo que o dado seja confirmado novamente.
 
-Quando os dados são **insuficientes** (faltando data/hora ou data improvável), o agendamento é salvo como `rascunho`. Quando **inválido** (`data_invalida`, `hora_invalida`, `no_passado`, `fora_expediente`, `conflito`), o registro é salvo com `status=rejeitado`, a resposta é reprocessada pelo Ollama e a `reply` pede um novo horário ao cliente. O campo `validacao` da resposta do `/chat` informa `{valido, motivo}`.
+Quando os dados são **insuficientes** (faltando data/hora), o agendamento é salvo como `rascunho`. Quando **inválido** (`data_invalida`, `hora_invalida`, `no_passado`, `fora_expediente`, `conflito`), o registro é salvo com `status=rejeitado`, a resposta é reprocessada pelo Ollama e a `reply` pede um novo horário ao cliente. O campo `validacao` da resposta do `/chat` informa `{valido, motivo}`.
+
+### Fluxo multi-turno incremental
+
+O sistema acumula os dados de agendamento ao longo dos turnos, sem descartar o que já foi informado:
+
+- Cada turno mantém no JSON **todos** os dados já coletados (o prompt instrui o LLM a não perder contexto).
+- O rascunho pode ser criado/atualizado **sem telefone**; o telefone é obrigatório apenas para **confirmar** o agendamento.
+- Quando o telefone não vem no turno atual, o sistema tenta recuperá-lo do cliente já vinculado ao rascunho.
+- O histórico enviado ao LLM é limitado às **últimas 14 mensagens** (~7 turnos) para não estourar a janela do `gemma2:2b`.
 
 ### Consolidação de agendamento por sessão
 
@@ -124,7 +133,8 @@ agendador-ia-app/
 │   ├── 2026-08-30-180847-PLANO-VALIDACAO-AGENDA.md  # plano de validação de agenda
 │   ├── 2026-08-30-183828-PLANO-STREAMING.md    # plano de streaming de tokens
 │   ├── 2026-08-30-214212-PLANO-CLIENT-HTML.md  # plano da interface HTML de chat
-│   └── 2026-08-31-165000-PLANO-CLIENTE-TELEFONE.md  # plano de cadastro de clientes
+│   ├── 2026-08-31-165000-PLANO-CLIENTE-TELEFONE.md  # plano de cadastro de clientes
+│   └── 2026-09-04-224600-PLANO-CORRECAO-MULTITURN.md  # plano de correção do fluxo multi-turno
 ├── app/
 │   ├── __init__.py
 │   ├── main.py               # App FastAPI, rotas, startup (cria tabelas)
@@ -152,19 +162,19 @@ Situação em **04/09/2026** — iterações de datas relativas, consolidação 
 - Novos campos: `status` (`confirmado`/`rascunho`/`rejeitado`) no agendamento e `validacao: {valido, motivo}` na resposta do `/chat`.
 - Rejeição com reprocessamento: quando o horário é inválido, o Ollama é reconsultado informando o motivo e a `reply` pede um novo horário; o registro é salvo como `rejeitado`.
 - **Datas em DD/MM/YYYY:** datas capturadas são normalizadas e persistidas no formato dia/mês/ano (inclusive em ISO `AAAA-MM-DD`), evitando inversão de dia/mês.
+- **Fluxo multi-turno robusto:** o rascunho avança sem telefone (obrigatório apenas para confirmar); o telefone do cliente é recuperado do rascunho quando o LLM o omite; o histórico enviado ao Ollama é limitado às últimas 14 mensagens. O parser de JSON agora extrai o bloco por contagem de chaves (suporta texto ao redor).
 - `GET /health`, `GET /sessoes`, `GET /sessoes/{id}/mensagens`, `GET /agendamentos`.
 - **Frontend/UI de chat:** diretório `client/` com `index.html` simples (sem build) que conversa com o `/chat` via SSE. Suba a API (`uvicorn app.main:app --reload`) e sirva o client (`python -m http.server 8080 -d client`), abrindo `http://localhost:8080`.
 - **Finalização de sessão e reinício automático:** após um agendamento `confirmado`, o `client/index.html` exibe contagem regressiva de 5 segundos, bloqueia novos inputs e recarrega a página (`window.location.reload()`) para iniciar uma sessão limpa.
 - **Script de reset:** `scripts/reset_db.py` zera o banco SQLite (confirma antes de apagar).
-- **Cadastro de clientes:** entidade `clientes` com `telefone` único. O LLM extrai nome e telefone (máscara `(NN) NNNN-NNNN`). Na primeira vez que um telefone aparece, o cliente é cadastrado automaticamente; em conversas seguintes, o cliente é reutilizado pelo telefone. Quando o telefone não é informado, o bot solicita ao usuário. CRUD completo em `/clientes`.
+- **Cadastro de clientes:** entidade `clientes` com `telefone` único. O LLM extrai nome e telefone (máscara `(NN) NNNNN-NNNN`). Na primeira vez que um telefone aparece, o cliente é cadastrado automaticamente; em conversas seguintes, o cliente é reutilizado pelo telefone. O telefone é solicitado pelo bot apenas para **confirmar** o agendamento (o rascunho avança sem ele). CRUD completo em `/clientes`.
 - Persistência SQLite completa: sessões, histórico de mensagens e agendamentos (banco `app/agendamento.db`).
 
 **Validado ponta a ponta (curl)**
 - Agendamento em dia útil dentro do expediente → `status=confirmado` e `validacao.valido=true`.
 - Domingo ou horário fora do expediente → `status=rejeitado` e `validacao.motivo=fora_expediente`, com `reply` pedindo novo horário.
 - Horário conflitante com um agendamento `confirmado` → `status=rejeitado` e `validacao.motivo=conflito`.
-- Mensagem sem data/hora → `status=rascunho`.
-- Data no passado ou improvável → tratada como `insuficiente` (não rejeição indevida).
+- Data no passado → `status=rejeitado` e `validacao.motivo=no_passado` (distinto de `insuficiente`); dados faltantes → `status=rascunho` com `motivo=insuficiente`.
 - Data relativa ("amanhã" etc.) → resolvida para a data concreta correta.
 - Informações dadas em mensagens separadas → consolidadas em um único registro confirmado.
 - Streaming (`curl -N` com `stream=true`): eventos `token` ao vivo, `done` com `agendamento`/`validacao`, e `correcao` nos casos de rejeição.

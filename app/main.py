@@ -65,111 +65,139 @@ def _obter_ou_criar_cliente(dados: dict) -> Optional[int]:
     return db.criar_cliente(nome, telefone)
 
 
+def _salvar_rascunho_parcial(sessao_id: int, finais: dict) -> None:
+    db.salvar_agendamento(
+        sessao_id, finais.get("cliente_id"),
+        finais.get("servico"), finais.get("data"),
+        finais.get("hora"), "rascunho",
+    )
+
+
+def _montar_agendamento(finais: dict, telefone: Optional[str], status: str) -> Agendamento:
+    cliente_id = finais.get("cliente_id")
+    cliente = finais.get("cliente")
+    if not cliente and cliente_id:
+        cliente = (db.obter_cliente(cliente_id) or {}).get("nome")
+    return Agendamento(
+        cliente_id=cliente_id,
+        cliente=cliente,
+        telefone=telefone,
+        servico=finais.get("servico"),
+        data=finais.get("data"),
+        hora=finais.get("hora"),
+        status=status,
+    )
+
+
 async def _processar_dados(
     sessao_id: int, dados: dict, historico
 ) -> Tuple[str, Optional[Agendamento], Optional[Validacao]]:
-    telefone = dados.get("telefone")
-    if not telefone:
-        return (
-            "Por favor, informe seu telefone para continuar com o agendamento.",
-            None,
-            None,
-        )
-
-    cliente_id = _obter_ou_criar_cliente(dados)
-
+    # 1. Resolver datas relativas PRIMEIRO
     dados["data"] = agenda.resolver_data_relativa(dados.get("data"))
     dados["data"] = agenda.formatar_data(dados.get("data"))
 
+    # 2. Buscar rascunho ativo e mesclar ANTES de checar telefone
     rascunho = db.obter_rascunho_ativo(sessao_id)
     if rascunho is not None:
         finais = dict(rascunho)
-        for chave in ("cliente_id", "cliente", "telefone", "servico", "data", "hora"):
+        for chave in ("servico", "data", "hora"):
             if dados.get(chave):
                 finais[chave] = dados[chave]
-        finais["cliente_id"] = cliente_id if cliente_id else finais.get("cliente_id")
     else:
         finais = {
-            "cliente_id": cliente_id,
-            "cliente": dados.get("cliente"),
-            "telefone": telefone,
             "servico": dados.get("servico"),
             "data": dados.get("data"),
             "hora": dados.get("hora"),
         }
 
-    agendamento = Agendamento(**{
-        "cliente_id": finais.get("cliente_id"),
-        "cliente": finais.get("cliente"),
-        "telefone": finais.get("telefone"),
-        "servico": finais.get("servico"),
-        "data": finais.get("data"),
-        "hora": finais.get("hora"),
-    })
+    # 3. Resolver telefone e cliente
+    telefone = dados.get("telefone")
+    if not telefone and rascunho is not None:
+        # Tentar recuperar telefone do cliente já vinculado ao rascunho
+        cliente_existente = (
+            db.obter_cliente(rascunho["cliente_id"])
+            if rascunho.get("cliente_id")
+            else None
+        )
+        if cliente_existente:
+            telefone = cliente_existente["telefone"]
 
-    resultado = agenda.validar_agendamento(finais.get("data"), finais.get("hora"))
-    reply = None
+    if telefone:
+        cliente_id = _obter_ou_criar_cliente({**dados, "telefone": telefone})
+        finais["cliente_id"] = cliente_id
+    else:
+        finais.setdefault("cliente_id", None)
 
-    if resultado.valido:
-        agendamento.status = "confirmado"
-        validacao = Validacao(valido=True, motivo=None)
+    # 4. Validar agendamento
+    validacao = agenda.validar_agendamento(finais.get("data"), finais.get("hora"))
+
+    if validacao.valido:
+        # Telefone obrigatório apenas para CONFIRMAR
+        if not telefone:
+            _salvar_rascunho_parcial(sessao_id, finais)
+            return (
+                "Quase lá! Preciso do seu telefone para confirmar o agendamento.",
+                _montar_agendamento(finais, telefone, "rascunho"),
+                Validacao(valido=False, motivo="insuficiente"),
+            )
+        db.salvar_agendamento(
+            sessao_id, finais["cliente_id"],
+            finais.get("servico"), finais.get("data"),
+            finais.get("hora"), "confirmado",
+        )
+        return (
+            None,  # manter reply original do LLM
+            _montar_agendamento(finais, telefone, "confirmado"),
+            Validacao(valido=True),
+        )
+
+    if validacao.motivo == "insuficiente":
+        # Salvar rascunho parcial com o que temos
+        if any(finais.get(k) for k in ("servico", "data", "hora")):
+            _salvar_rascunho_parcial(sessao_id, finais)
+        return (
+            None,  # manter reply conversacional do LLM
+            _montar_agendamento(finais, telefone, "rascunho"),
+            Validacao(valido=False, motivo="insuficiente"),
+        )
+
+    # Rejeitado (conflito, fora_expediente, no_passado, etc.)
+    agendamento = _montar_agendamento(finais, telefone, "rejeitado")
+    validacao = Validacao(valido=False, motivo=validacao.motivo)
+    motivo_texto = MOTIVO_TEXTO.get(
+        validacao.motivo, "o horário não está disponível"
+    )
+    rejeicao_texto = (
+        f"O cliente pediu para agendar em {finais.get('data')} às "
+        f"{finais.get('hora')}, mas isso não é possível porque "
+        f"{motivo_texto}."
+    )
+    db.salvar_agendamento_rejeitado(
+        sessao_id,
+        finais.get("cliente_id"),
+        finais.get("servico"),
+        finais.get("data"),
+        finais.get("hora"),
+    )
+    if rascunho is not None:
+        db.atualizar_agendamento(
+            rascunho["id"],
+            finais.get("cliente_id"),
+            finais.get("servico"),
+            None,
+            None,
+            "rascunho",
+        )
+    else:
         db.salvar_agendamento(
             sessao_id,
             finais.get("cliente_id"),
             finais.get("servico"),
-            finais.get("data"),
-            finais.get("hora"),
-            status="confirmado",
+            None,
+            None,
+            status="rascunho",
         )
-    elif resultado.motivo == "insuficiente":
-        agendamento.status = "rascunho"
-        validacao = Validacao(valido=False, motivo=resultado.motivo)
-        if any(finais.get(k) for k in ("cliente_id", "servico", "data", "hora")):
-            db.salvar_agendamento(
-                sessao_id,
-                finais.get("cliente_id"),
-                finais.get("servico"),
-                finais.get("data"),
-                finais.get("hora"),
-                status="rascunho",
-            )
-    else:
-        agendamento.status = "rejeitado"
-        validacao = Validacao(valido=False, motivo=resultado.motivo)
-        motivo_texto = MOTIVO_TEXTO.get(
-            resultado.motivo, "o horário não está disponível"
-        )
-        rejeicao_texto = (
-            f"O cliente pediu para agendar em {finais.get('data')} às "
-            f"{finais.get('hora')}, mas isso não é possível porque "
-            f"{motivo_texto}."
-        )
-        db.salvar_agendamento_rejeitado(
-            sessao_id,
-            finais.get("cliente_id"),
-            finais.get("servico"),
-            finais.get("data"),
-            finais.get("hora"),
-        )
-        if rascunho is not None:
-            db.atualizar_agendamento(
-                rascunho["id"],
-                finais.get("cliente_id"),
-                finais.get("servico"),
-                None,
-                None,
-                "rascunho",
-            )
-        else:
-            db.salvar_agendamento(
-                sessao_id,
-                finais.get("cliente_id"),
-                finais.get("servico"),
-                None,
-                None,
-                status="rascunho",
-            )
-        reply, _ = await ollama.reprocessar_rejeicao(historico(), rejeicao_texto)
+    reply, _ = await ollama.reprocessar_rejeicao(historico(), rejeicao_texto)
 
     return reply, agendamento, validacao
 
@@ -217,6 +245,9 @@ async def _gerar_stream(
     yield "data: [DONE]\n\n"
 
 
+MAX_HISTORICO = 14  # últimas 14 mensagens (~7 turnos)
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
     if req.sessao_id is not None:
@@ -233,15 +264,15 @@ async def chat(req: ChatRequest):
         {"role": m["role"], "content": m["conteudo"]}
         for m in db.listar_mensagens(sessao_id)
         if m["role"] in ("user", "assistant")
-    ]
+    ][-MAX_HISTORICO:]
 
     if req.stream:
         return StreamingResponse(
-            _gerar_stream(sessao_id, historico, req.mensagem),
+            _gerar_stream(sessao_id, historico, ""),
             media_type="text/event-stream",
         )
 
-    reply, dados = await ollama.chat(historico(), req.mensagem)
+    reply, dados = await ollama.chat(historico(), "")
 
     agendamento = None
     validacao: Validacao | None = None

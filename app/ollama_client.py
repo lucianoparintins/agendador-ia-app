@@ -1,6 +1,5 @@
 import ast
 import json
-import re
 from datetime import datetime
 from typing import AsyncIterator, List, Optional
 
@@ -11,23 +10,23 @@ MODEL = "gemma2:2b"
 
 SYSTEM_PROMPT = (
     "Você é um assistente de agendamento de serviços de barbearia/salão de beleza. "
-    "Converse de forma amigável e conduza o cliente a informar: nome do cliente, "
-    "telefone do cliente, serviço desejado (ex.: corte de cabelo, barba, manicure), "
-    "data e horário. "
-    "Quando tiver esses dados, confirme o agendamento. "
-    "Ao final da sua resposta, sempre inclua um bloco JSON no formato "
-    "{'cliente': ..., 'telefone': ..., 'servico': ..., 'data': ..., 'hora': ...} "
-    "preenchendo apenas os campos que já conhece (null para os desconhecidos). "
-    "Para telefone, extraia e formate no padrão (NN) NNNN-NNNN (ex: (11) 9999-8888). "
-    "Sempre apresente datas no formato DD/MM/YYYY. "
-    "Quando o cliente usar datas relativas (hoje, amanhã, depois de amanhã, "
-    "próxima semana, próxima <dia da semana>), calcule a data exata a partir da "
-    "data atual fornecida. Nunca use anos passados nem datas inventadas; se não "
-    "tiver certeza da data, deixe o campo data como null para o backend calcular. "
-    "Responda em português do Brasil."
+    "Converse de forma amigável e conduza o cliente a informar: nome, telefone, "
+    "serviço desejado (ex.: corte de cabelo, barba, manicure), data e horário. "
+    "Pergunte um ou dois dados por vez, sem sobrecarregar o cliente. "
+    "Quando tiver todos os dados, confirme o agendamento.\n\n"
+    "REGRA IMPORTANTE: Ao final de TODA resposta, inclua um bloco JSON com aspas duplas "
+    "no formato:\n"
+    '{"cliente": ..., "telefone": ..., "servico": ..., "data": ..., "hora": ...}\n\n'
+    "- Preencha apenas os campos que já conhece (null para os desconhecidos).\n"
+    "- MANTENHA no JSON todos os dados já informados nas mensagens anteriores. "
+    "Só altere um campo se o cliente explicitamente corrigir ou complementar.\n"
+    "- Para telefone, formate no padrão (NN) NNNNN-NNNN (ex: (92) 99999-8888).\n"
+    "- Apresente datas no formato DD/MM/YYYY.\n"
+    "- Quando o cliente usar datas relativas (hoje, amanhã, próxima sexta), "
+    "calcule a data exata a partir da data atual fornecida. "
+    "Se não tiver certeza da data, deixe como null.\n"
+    "- Responda em português do Brasil."
 )
-
-_JSON_RE = re.compile(r"\{.*?\}", re.DOTALL)
 
 
 def _system_prompt() -> str:
@@ -39,16 +38,28 @@ def _system_prompt() -> str:
 
 
 def _extrair_json(texto: str) -> Optional[dict]:
-    match = _JSON_RE.search(texto)
-    if not match:
+    """Extrai o último bloco JSON {...} do texto usando contagem de chaves."""
+    fim = texto.rfind("}")
+    if fim == -1:
         return None
-    blob = match.group(0)
+    nivel = 0
+    inicio = -1
+    for i in range(fim, -1, -1):
+        if texto[i] == "}":
+            nivel += 1
+        elif texto[i] == "{":
+            nivel -= 1
+        if nivel == 0:
+            inicio = i
+            break
+    if inicio == -1:
+        return None
+    blob = texto[inicio : fim + 1]
     try:
         data = json.loads(blob)
         return data if isinstance(data, dict) else None
     except (json.JSONDecodeError, ValueError):
         pass
-
     try:
         fix = (
             blob.replace("null", "None")
@@ -88,19 +99,20 @@ class OllamaClient:
         return reply, dados
 
     @staticmethod
-    def _montar_messages(historico: List[dict], nova_mensagem: str) -> List[dict]:
+    def _montar_messages(historico: List[dict], nova_mensagem: str = "") -> List[dict]:
         messages = [{"role": "system", "content": _system_prompt()}]
         messages.extend(historico)
-        messages.append({"role": "user", "content": nova_mensagem})
+        if nova_mensagem:
+            messages.append({"role": "user", "content": nova_mensagem})
         return messages
 
     async def chat(
-        self, historico: List[dict], nova_mensagem: str
+        self, historico: List[dict], nova_mensagem: str = ""
     ) -> tuple[str, Optional[dict]]:
         return await self._call(self._montar_messages(historico, nova_mensagem))
 
     async def stream_chat(
-        self, historico: List[dict], nova_mensagem: str
+        self, historico: List[dict], nova_mensagem: str = ""
     ) -> AsyncIterator[str]:
         payload = {
             "model": self.model,
